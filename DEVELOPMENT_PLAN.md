@@ -91,7 +91,7 @@ secure-vault/
 ├── docker-compose.yml
 ├── .env.example
 ├── DEVELOPMENT_PLAN.md
-├── PROGRESS.md                       # AI ovde čekira završene faze
+├── PROGRESS.md                       # Cekiranje završenih faza
 ├── gateway/                          # Spring Cloud Gateway (Maven projekat)
 │   ├── Dockerfile
 │   ├── pom.xml
@@ -506,7 +506,7 @@ create index idx_refresh_user on refresh_token(user_id);
 8. **Append-only audit.** Nema UPDATE/DELETE ruta nad `audit_log`.
 9. **Commit po fazi** sa porukom `feat(fazaN): <kratak opis>`.
 
-### 5.4 PROGRESS.md (AI održava)
+### 5.4 PROGRESS.md
 ```
 - [ ] Faza 0  — Setup i Konfiguracija
 - [ ] Faza 1  — Data Layer i Migracije
