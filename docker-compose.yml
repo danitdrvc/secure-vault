@@ -1,0 +1,77 @@
+# Secure Vault — Faza 0: 5 servisa (postgres, redis, backend, gateway, frontend).
+# Vrednosti dolaze iz .env (kopiraj .env.example -> .env). Ako .env ne postoji,
+# koriste se default-i ispod (${VAR:-default}) pa `docker compose up` radi i bez njega.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-securevault}
+      POSTGRES_USER: ${POSTGRES_USER:-vault}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vault}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vault} -d ${POSTGRES_DB:-securevault}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - vault-net
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - vault-net
+
+  backend:
+    build: ./backend
+    # Faza 0: backend nudi samo /health; DB/Redis se koriste od Faze 1.
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - vault-net
+
+  gateway:
+    build: ./gateway
+    environment:
+      BACKEND_URI: ${BACKEND_URI:-http://backend:8081}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+    networks:
+      - vault-net
+
+  frontend:
+    build: ./frontend
+    environment:
+      VITE_GATEWAY_URL: ${VITE_GATEWAY_URL:-http://localhost:8080}
+    ports:
+      - "5173:5173"
+    depends_on:
+      - gateway
+    networks:
+      - vault-net
+
+volumes:
+  pgdata:
+
+networks:
+  vault-net:
+    driver: bridge

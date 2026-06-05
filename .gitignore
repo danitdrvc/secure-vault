@@ -1,0 +1,21 @@
+# Env / tajne
+.env
+
+# Java / Maven
+target/
+*.class
+*.jar
+!**/.mvn/wrapper/*.jar
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+
+# IDE / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db

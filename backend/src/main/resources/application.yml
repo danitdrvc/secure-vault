@@ -1,0 +1,9 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: secure-vault-backend
+
+# Faza 0: backend je "prazan" servis sa samo /health endpointom.
+# Datasource, JPA, Flyway i Redis dolaze u Fazi 1+.
