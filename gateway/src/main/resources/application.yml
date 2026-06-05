@@ -1,0 +1,23 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: secure-vault-gateway
+  cloud:
+    gateway:
+      routes:
+        # Sav backend saobraćaj ide kroz /api/** -> backend (StripPrefix skida /api).
+        - id: backend
+          uri: ${BACKEND_URI:http://localhost:8081}
+          predicates:
+            - Path=/api/**
+          filters:
+            - StripPrefix=1
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins: ${FRONTEND_ORIGIN:http://localhost:5173}
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
