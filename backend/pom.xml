@@ -47,6 +47,19 @@
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
+        <!-- Faza 3: Bean Validation (Hibernate Validator) na DTO-ima. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- Faza 3: BCryptPasswordEncoder za bcrypt(authKey). Samo kripto modul (bez
+             punog security starter-a / filter chain-a — taj dolazi u Fazi 4). -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
+        </dependency>
+
         <!-- Flyway: verzionisanje šeme; auto-migrate na startu (Spring Boot integracija). -->
         <dependency>
             <groupId>org.flywaydb</groupId>

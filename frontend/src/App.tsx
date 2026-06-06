@@ -1,42 +1,19 @@
-import { useEffect, useState } from 'react'
-import axios from 'axios'
-import { gatewayUrl } from './config'
-
-type BackendStatus = 'checking' | 'ok' | 'unreachable'
+import { Link, Route, Routes } from 'react-router-dom'
+import HealthStatus from './components/health-status'
+import RegisterForm from './features/auth/register-form'
 
 export default function App() {
-  const [status, setStatus] = useState<BackendStatus>('checking')
-
-  useEffect(() => {
-    let cancelled = false
-
-    axios
-      .get<{ status: string }>(`${gatewayUrl}/api/health`)
-      .then((res) => {
-        if (!cancelled) {
-          setStatus(res.data?.status === 'ok' ? 'ok' : 'unreachable')
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setStatus('unreachable')
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const label =
-    status === 'checking'
-      ? 'checking...'
-      : status === 'ok'
-        ? 'backend: ok'
-        : 'backend: unreachable'
-
   return (
     <main style={{ fontFamily: 'system-ui, sans-serif', padding: 32 }}>
       <h1>Secure Vault</h1>
-      <p data-testid="backend-status">{label}</p>
+      <nav style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+        <Link to="/">Početna</Link>
+        <Link to="/register">Registracija</Link>
+      </nav>
+      <Routes>
+        <Route path="/" element={<HealthStatus />} />
+        <Route path="/register" element={<RegisterForm />} />
+      </Routes>
     </main>
   )
 }
