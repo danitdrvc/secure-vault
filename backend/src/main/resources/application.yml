@@ -32,3 +32,20 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: false
+
+# Faza 4 — Autentikacija. TTL-ovi (access/refresh/session) NISU ovde: oni dolaze iz aktivne
+# security_policy (admin ih menja u Fazi 8). Ovde su samo tajne i ne-politički parametri.
+app:
+  auth:
+    # HS256 tajna za potpis JWT-a. MORA biti >= 32 bajta. Dev default je nesiguran — u
+    # produkciji se postavlja preko JWT_SECRET (npr. `openssl rand -base64 48`).
+    jwt-secret: ${JWT_SECRET:dev-only-insecure-jwt-secret-change-me-0123456789abcdef}
+    jwt-issuer: secure-vault
+    # Server-side ključ kojim se TOTP tajne šifruju u bazi (izvan zero-knowledge domena).
+    # Bilo koji string — interno se SHA-256 hešom svodi na 32B AES ključ.
+    server-kms-key: ${SERVER_KMS_KEY:dev-only-insecure-server-kms-key-change-me}
+    # Trajanje privremenog MFA tiketa između login koraka (sekunde).
+    mfa-ticket-ttl-sec: 300
+    # Secure flag na sesijskim kolačićima. Dev je http://localhost (false); u
+    # produkciji/dockeru se pali preko APP_COOKIE_SECURE=true.
+    cookie-secure: ${APP_COOKIE_SECURE:false}

@@ -6,7 +6,7 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - [x] Faza 1  — Data Layer i Migracije
 - [x] Faza 2  — Klijentski Kripto Sloj
 - [x] Faza 3  — Registracija i Skladištenje Ključeva
-- [ ] Faza 4  — Autentikacija (lozinka + MFA + sesije)
+- [x] Faza 4  — Autentikacija (lozinka + MFA + sesije)
 - [ ] Faza 5  — OIDC Prijava
 - [ ] Faza 6  — Vault CRUD
 - [ ] Faza 7  — Sigurno Deljenje
@@ -174,3 +174,71 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - `npm test` (`frontend/`) → **7 test fajlova, 18 testova, 0 grešaka** (5 novih:
   `codec.test.ts`, `registration.test.ts` — uklj. „telo NE sadrži master lozinku").
 - `npm run build` (`tsc && vite build`) → čist type-check + build.
+
+---
+
+## Faza 4 — Autentikacija (lozinka + MFA + sesije)
+
+**Šta je urađeno:**
+- **Pun Spring Security filter chain** (`spring-boot-starter-security`) — stateless, token-based:
+  autentikacija se nosi access JWT-om u `sv_access` **HttpOnly** kolačiću
+  (`security/JwtCookieAuthenticationFilter`, instanciran u `config/SecurityConfig`, NIJE bean
+  da ga Boot ne auto-registruje kao samostalni servlet filter). CSRF isključen (kolačići su
+  `SameSite=Strict`). Javne rute: `/users/register`, `/auth/login/**`, `/auth/totp/**`,
+  `/auth/refresh`; sve ostalo (`/auth/me`, buduće) traži važeći access token.
+  `security/RestAuthenticationEntryPoint` vraća konzistentan `{error:{code,message}}` za 401/403.
+- **JWT (jjwt 0.12.x)** — `security/JwtService`: tri tipa tokena (`access` nosi username+role;
+  `refresh` nosi `sxp` = apsolutni cap sesije; `mfa` privremeni tiket). HS256 (tajna iz
+  `app.auth.jwt-secret`), svaki token ima `jti` (jedinstven → SHA-256 heš refresh-a ne kolidira).
+  `parseAllowingExpired` čita `sxp` i kad je token istekao (radi jasnog `SESSION_EXPIRED`).
+- **TOTP (dev.samstevens.totp 1.7.x)** — `auth/service/TotpService`: generiše base32 tajnu,
+  `otpauth://` URI + PNG QR (data URI), verifikuje 6-cifreni kod (RFC 6238). Tajna se čuva
+  šifrovana server-side (`auth/service/ServerSecretCipher`, AES-256-GCM, ključ = `SHA-256(SERVER_KMS_KEY)`)
+  u `users.totp_secret_enc` — auth materijal van zero-knowledge domena.
+- **Login tok** (`auth/service/AuthService` + `auth/web/AuthController`, prefiks `/auth`):
+  - `POST /auth/login/params` `{username}` → `{kdfSalt, kdfIterations}` (klijent izvede `authKey`;
+    za nepostojeći nalog deterministički pseudo-salt → otpornost na enumeraciju).
+  - `POST /auth/login/step1` `{username, authKey}` → bcrypt provera; `403` ako nalog nije `ACTIVE`;
+    izdaje `mfaTicket` (+ `totpEnabled` flag).
+  - `POST /auth/totp/setup` `{mfaTicket}` → otpauth URI + QR (tajna „pending" do verifikacije).
+  - `POST /auth/totp/verify` `{mfaTicket, totpCode}` → uključuje `totp_enabled`.
+  - `POST /auth/login/step2` `{mfaTicket, totpCode}` → verifikuje TOTP, izdaje access+refresh
+    (`auth/service/TokenService`), postavlja oba kolačića `HttpOnly; Secure; SameSite=Strict`,
+    vraća `VaultMaterial` (šifrovani `encUsk/encPrivateKey/kdfSalt/...`) za klijentsko otključavanje.
+  - `POST /auth/refresh` → rotacija: stari refresh `revoked` u `refresh_token` (heš), nov par;
+    istek novog = `min(now+refresh_token_ttl_sec, session_expires_at)`; posle apsolutnog capa
+    (`session_max_ttl_sec` od logina) → `401 SESSION_EXPIRED`. TTL-ovi se čitaju iz aktivne
+    `security_policy` (admin ih menja u Fazi 8).
+  - `GET /auth/me` → metapodaci naloga (zaštićeno access tokenom).
+- **Frontend** — `context/session-context.tsx` (React Context; otključani `usk`+privatni ključ
+  žive SAMO u memoriji, nikad u localStorage/sessionStorage → refresh stranice = ponovni unlock).
+  `crypto/vault.ts` `deriveLoginAuthKey`; `features/auth/login.ts` (`computeAuthKey`, `unlockVault` —
+  čiste funkcije), `features/auth/api.ts` (params/step1/totp/step2/refresh/me), multi-step
+  `features/auth/login-form.tsx` (credentials → TOTP setup/QR → unos koda → otključavanje).
+  Ruta `/login`, `SessionProvider` u `main.tsx`.
+
+**Acceptance Criteria:**
+- [x] Login bez validnog TOTP-a → `401`. *(`AuthFlowTest.loginBezValidnogTotpVraca401`: pogrešan
+  kod → `401`, bez `Set-Cookie`; `pogresnaLozinkaVraca401`: pogrešan authKey → `401`.)*
+- [x] Pun tok (step1→TOTP→step2) postavlja 2 kolačića sa ispravnim flegovima.
+  *(`punTokSesijePostavljaDvaKolacicaSaIspravnimFlegovima`: 2 `Set-Cookie`, oba sadrže
+  `HttpOnly`, `Secure`, `SameSite=Strict`; potom `/auth/me` sa kolačićem → `200`, bez → `401`.)*
+- [x] Posle `access_token_ttl_sec` zaštićeni endpoint → `401`; `/auth/refresh` izda nov access;
+  stari refresh više ne radi. *(`posleIstekaAccessTokenaMeVraca401PaRefreshIzdajeNov` +
+  `rotacijaRefreshTokenaPonistavaStari`: ponovna upotreba starog refresh-a → `401`.)*
+- [x] Posle `session_max_ttl_sec` od logina `/auth/refresh` → `401` (apsolutni cap; refresh TTL
+  je 3600 ali sesija 1s → jedino cap obara refresh). *(`posleApsolutnogCapaSesijeRefreshVraca401`.)*
+- [x] E2E: posle login-a frontend otključa i drži USK u memoriji (ne u storage-u).
+  *(`login.test.ts`: `computeAuthKey` reprodukuje isti `authKey` koji server čuva, `unlockVault`
+  rekonstruiše IDENTIČAN USK iz vraćenog materijala, pogrešna lozinka ne otključava;
+  `SessionContext` drži ključeve u React state-u — nigde u kodu nema localStorage/sessionStorage.)*
+
+**Verifikacija (lokalno, hand-installed JDK 21 + Maven 3.9.9 — bez Dockera):**
+- `mvn -f backend/pom.xml test` → **BUILD SUCCESS, 18 testova, 0 grešaka** (7 novih u
+  `AuthFlowTest`, `@SpringBootTest` + MockMvc nad embedded PG16; `HealthControllerTest` ažuriran
+  da učita stvarni security chain).
+- `npm test` (`frontend/`) → **8 test fajlova, 21 test, 0 grešaka** (3 nova u `login.test.ts`).
+- `npm run build` (`tsc && vite build`) → čist type-check + build.
+
+> Napomena: `app.auth.cookie-secure` je u dev-u `false` (http://localhost); u produkciji/HTTPS
+> se pali preko `APP_COOKIE_SECURE=true`. Test forsira `true` da proveri `Secure` flag.
