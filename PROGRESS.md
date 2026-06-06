@@ -5,7 +5,7 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - [x] Faza 0  — Setup i Konfiguracija
 - [x] Faza 1  — Data Layer i Migracije
 - [x] Faza 2  — Klijentski Kripto Sloj
-- [ ] Faza 3  — Registracija i Skladištenje Ključeva
+- [x] Faza 3  — Registracija i Skladištenje Ključeva
 - [ ] Faza 4  — Autentikacija (lozinka + MFA + sesije)
 - [ ] Faza 5  — OIDC Prijava
 - [ ] Faza 6  — Vault CRUD
@@ -121,3 +121,56 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 
 **Verifikacija:** `npm test` (u `frontend/`) → **5 test fajlova, 13 testova, 0 grešaka**.
 `npm run build` (`tsc && vite build`) → čist type-check + build.
+
+---
+
+## Faza 3 — Registracija i Skladištenje Ključeva
+
+**Šta je urađeno:**
+- **Backend `user` modul** — `POST /users/register` (`UserController` → `UserService` →
+  `UserRepository`). Prima `{username, email, kdfSalt, kdfIterations, authKey, encUsk,
+  publicKey, encPrivateKey}`; vraća `201` + `RegisterResponse` (samo `id/username/email/
+  role/status` — NIKAD kripto materijal). Novi nalog: `role=DEVELOPER`, `status=ACTIVE`.
+- **Zero-knowledge skladištenje** — server čuva SAMO `bcrypt(authKey)` u `auth_hash`
+  (`BCryptPasswordEncoder`), nikad authKey ni master lozinku. Kripto blobovi (`enc_usk`,
+  `enc_private_key`, `public_key`) se dekodiraju iz base64 i upisuju kao `bytea` —
+  neprozirni za server.
+- **Bean Validation** (`spring-boot-starter-validation`) — kastom constraint
+  `@Base64Bytes(min,max)` (`common/validation/`) proverava da je svaki artefakt validan
+  base64 očekivane veličine (salt 16B, authKey 32B, encUsk 60B, publicKey ~294B,
+  encPrivateKey 1230–1300B). Donja granica `encPrivateKey` je IZNAD veličine nešifrovanog
+  PKCS8 (1217B) → odbija slučajno poslat plaintext privatni ključ. `kdfIterations ≥ 600000`.
+  Jackson `fail-on-unknown-properties=true` → nepoznata polja (npr. „masterPassword") = `400`.
+- **`BCryptPasswordEncoder` bean** (`config/SecurityConfig`) — samo `spring-security-crypto`
+  (bez punog security starter-a / filter chain-a; to dolazi u Fazi 4), pa je `/users/register`
+  otvoren bez dodatne security konfiguracije.
+- **Tipizovane greške + `GlobalExceptionHandler`** (`common/error/`) — `AppException` baza +
+  `ConflictException` (409); mapiranje u `{ "error": { "code", "message" } }` bez internih
+  detalja. `409 CONFLICT` za zauzeto korisničko ime/email, `400 VALIDATION`/`BAD_REQUEST`.
+- **Audit stub** (`audit/service/AuditService`) — `record(...)` upisuje `USER_REGISTERED`
+  zapis sa `prevHash="GENESIS"` i jedinstvenim SHA-256 hešom (kolona `hash` je UNIQUE).
+  Pravi linearni hash-lanac + `verifyChain()` + anchoring dolaze u Fazi 11.
+- **Frontend `features/auth`** — `RegisterForm` (kebab `register-form.tsx`): unos
+  username/email/master lozinka (+ potvrda, min 12), zove `bootstrapKeys(pw)` (kripto na
+  klijentu), serijalizuje artefakte i POST-uje. `registration.ts` (`buildRegisterRequest`,
+  čista funkcija — bez lozinke u izlazu), `api/codec.ts` (base64 ↔ bajtovi, standardni
+  format koji `java.util.Base64` strogi dekoder prihvata), `api/client.ts` (axios ka
+  `${gateway}/api`, `withCredentials`). React Router: `/` (health), `/register`.
+
+**Acceptance Criteria:**
+- [x] `POST /users/register` vraća `201`; u DB `auth_hash` ≠ poslati `authKey`.
+  *(`UserRegistrationTest`: `auth_hash` počinje sa `$2`, `≠ authKey`, a
+  `passwordEncoder.matches(authKey, auth_hash)` = true.)*
+- [x] `enc_usk`, `enc_private_key`, `public_key` upisani kao `bytea`, ne-prazni.
+  *(`UserRegistrationTest`: `encUsk` 60B, ostali ne-prazni; `kdfSalt` 16B, `kdfIterations` 600000.)*
+- [x] Ne postoji kolona sa plaintext lozinkom/USK/privatnim ključem. *(Server prima samo
+  šifrovane artefakte + `authKey`; čuva `bcrypt(authKey)` i klijentske šifrate; nema
+  password kolone. Negativan test: `encPrivateKey` veličine plaintext PKCS8 → `400`;
+  nepoznato polje `masterPassword` → `400` i nalog se ne kreira.)*
+
+**Verifikacija (lokalno, hand-installed JDK 21 + Maven 3.9.9 — bez Dockera):**
+- `mvn -f backend/pom.xml test` → **BUILD SUCCESS, 11 testova, 0 grešaka** (4 nova u
+  `UserRegistrationTest`, `@SpringBootTest` + MockMvc nad embedded PG16).
+- `npm test` (`frontend/`) → **7 test fajlova, 18 testova, 0 grešaka** (5 novih:
+  `codec.test.ts`, `registration.test.ts` — uklj. „telo NE sadrži master lozinku").
+- `npm run build` (`tsc && vite build`) → čist type-check + build.

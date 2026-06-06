@@ -5,6 +5,11 @@ spring:
   application:
     name: secure-vault-backend
 
+  # Striktna deserijalizacija: odbij nepoznata polja u telima zahteva (DEVELOPMENT_PLAN 5.2).
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+
   # Faza 1: Data Layer. Vrednosti iz env-a (Docker), sa lokalnim default-ima za `mvn spring-boot:run`.
   # U Docker mreži host je `postgres` (vidi .env / docker-compose); lokalno je `localhost`.
   datasource:
