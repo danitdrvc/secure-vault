@@ -4,7 +4,7 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 
 - [x] Faza 0  — Setup i Konfiguracija
 - [x] Faza 1  — Data Layer i Migracije
-- [ ] Faza 2  — Klijentski Kripto Sloj
+- [x] Faza 2  — Klijentski Kripto Sloj
 - [ ] Faza 3  — Registracija i Skladištenje Ključeva
 - [ ] Faza 4  — Autentikacija (lozinka + MFA + sesije)
 - [ ] Faza 5  — OIDC Prijava
@@ -77,3 +77,47 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 `Successfully applied 2 migrations ... now at version v2`; `flyway_schema_history` V1+V2 = success;
 živi `SELECT count(*) FROM security_policy WHERE is_active = true` = 1; admin + 3 honeytokena prisutni.
 (Testovi su hermetični i ne zavise od ovoga.)
+
+---
+
+## Faza 2 — Klijentski Kripto Sloj
+
+**Šta je urađeno:**
+- Reuzabilan, testiran kripto modul na frontendu (`frontend/src/crypto/`), isključivo nad
+  ugrađenim **Web Crypto API** (`crypto.subtle`) — nula eksternih kripto biblioteka, bez
+  sopstvenih implementacija algoritama. Sloj NE dodiruje mrežu (čista memorija čitača).
+- `kdf.ts` — `deriveMasterKey(pw, salt, iterations)`: PBKDF2-HMAC-SHA256 (default 600k iteracija)
+  → non-extractable HKDF bazni ključ (IKM za razdvajanje namena).
+- `derive.ts` — `deriveKek(masterKey)` (HKDF `info="vault-kek"` → AES-256-GCM KEK) i
+  `deriveAuthKey(masterKey)` (HKDF `info="vault-auth"` → 32B authKey za server). Razdvajanje
+  namena `info` labelama: znanje jednog materijala ne otkriva drugi.
+- `sym.ts` — `aesGcmEncrypt/Decrypt` (AES-256-GCM), format `nonce(12B) || ciphertext(+tag)`;
+  slučajan nonce po pozivu; neuspeh auth taga → `CryptoError` (bez tihog fallback-a).
+  `importAesGcmKey` helper.
+- `asym.ts` — `generateKeyPair()` (RSA-OAEP 2048, SHA-256), `wrapTo(publicKey, data)`,
+  `unwrap(privateKey, box)` + SPKI/PKCS8 export/import helperi.
+- `vault.ts` — visoke funkcije: `bootstrapKeys(pw)` (slučajan USK + RSA par → vraća
+  `RegistrationArtifacts` za server: `kdfSalt/kdfIterations/authKey/encUsk/publicKey/encPrivateKey`,
+  i `UnlockedVault` za memoriju) i `unlock(pw, salt, iterations, encUsk, encPrivateKey)` koji
+  rekonstruiše USK i privatni ključ. Slojevi: `encUsk=AES-GCM(KEK,USK)`,
+  `encPrivateKey=AES-GCM(USK, priv)`.
+- `bytes.ts` — `Bytes = Uint8Array<ArrayBuffer>` alias (Web Crypto `BufferSource` traži
+  `ArrayBuffer`-backed poglede; TS 5.9 typed-array generika). `errors.ts` — `CryptoError`.
+  `index.ts` — barrel.
+- Vitest testovi (env `node`, pun WebCrypto): `sym.test.ts`, `asym.test.ts`, `vault.test.ts`,
+  `no-network.test.ts`.
+
+**Acceptance Criteria:**
+- [x] `unlock(bootstrap output)` rekonstruiše ISTI USK i privatni ključ (round-trip).
+  *(`vault.test.ts`: identičan `exportKey('raw')` USK; privatni ključ otvara box uvijen ka
+  objavljenom javnom ključu.)*
+- [x] `wrapTo(pubB, x)` → `unwrap(privB)` = `x`; privatni ključ A NE otvara box za B.
+  *(`asym.test.ts`; cross-ključ → `CryptoError`.)*
+- [x] AES-GCM dekripcija pogrešnim ključem baca grešku (autentikacija radi).
+  *(`sym.test.ts`: pogrešan ključ i izmenjen šifrat → `CryptoError`.)*
+- [x] Negativan test: nijedna funkcija ne emituje ništa kroz mrežu.
+  *(`no-network.test.ts`: `fetch`/`XMLHttpRequest` mock-ovani da pucaju; pun tok prolazi
+  bez ijednog poziva.)*
+
+**Verifikacija:** `npm test` (u `frontend/`) → **5 test fajlova, 13 testova, 0 grešaka**.
+`npm run build` (`tsc && vite build`) → čist type-check + build.
