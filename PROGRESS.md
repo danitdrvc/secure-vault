@@ -3,7 +3,7 @@
 Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 
 - [x] Faza 0  — Setup i Konfiguracija
-- [ ] Faza 1  — Data Layer i Migracije
+- [x] Faza 1  — Data Layer i Migracije
 - [ ] Faza 2  — Klijentski Kripto Sloj
 - [ ] Faza 3  — Registracija i Skladištenje Ključeva
 - [ ] Faza 4  — Autentikacija (lozinka + MFA + sesije)
@@ -37,3 +37,41 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 **Lokalni dev setup (umesto Dockera, za sada):**
 - JDK 21 (Temurin) + Maven 3.9.9 (u `~/tools`), `JAVA_HOME` i PATH podešeni na korisničkom nivou.
 - Pokretanje: `mvn spring-boot:run` u `backend/` i `gateway/`, `npm run dev` u `frontend/`.
+
+---
+
+## Faza 1 — Data Layer i Migracije
+
+**Šta je urađeno:**
+- `backend/pom.xml`: dodati `spring-boot-starter-data-jpa`, `flyway-core` + `flyway-database-postgresql`,
+  `postgresql` (runtime); za test `io.zonky.test:embedded-database-spring-test` + `embedded-postgres`
+  + Windows binar (PG16, preko `embedded-postgres-binaries-bom`).
+- `application.yml`: `datasource` (env `DB_URL`/`POSTGRES_USER`/`POSTGRES_PASSWORD`, lokalni default
+  `jdbc:postgresql://localhost:5432/securevault`, `vault/vault`), `jpa.hibernate.ddl-auto=validate`
+  (Flyway je vlasnik šeme), `flyway.enabled=true` (auto-migrate na startu).
+- `db/migration/V1__init.sql`: kompletan DDL iz sekcije 3.2 (9 tabela + indeksi + `pgcrypto`).
+- `db/migration/V2__seed.sql`: idempotentan seed — 1 `ADMIN` (placeholder kripto polja: nasumični
+  bajtovi samo da zadovolje NOT NULL; prave vrednosti nastaju na klijentu u Fazi 3/4), 1 aktivna
+  `security_policy`, 3 `honeytoken` reda.
+- JPA entiteti za svih 9 tabela (per-feature `domain/`): `User` (+`Role`,`UserStatus`), `Secret`,
+  `SecretAccess`, `SecurityPolicy`, `AuditLog`, `AuditAnchor`, `Honeytoken`, `SecurityEvent`, `RefreshToken`.
+  Mapiranja: `byte[]`↔`bytea`, `String`↔`jsonb` (`@JdbcTypeCode(JSON)`), enum↔`varchar` (STRING),
+  `OffsetDateTime`↔`timestamptz`, `bigserial` (audit `seq`) read-only.
+- Spring Data JPA repozitorijumi po feature-u (`repository/`): `UserRepository`, `SecretRepository`,
+  `SecretAccessRepository`, `SecurityPolicyRepository`, `AuditLogRepository`, `AuditAnchorRepository`,
+  `HoneytokenRepository`, `SecurityEventRepository`, `RefreshTokenRepository`.
+- Testovi nad PRAVIM (embedded) Postgresom umesto H2 (meta-anotacija `@EmbeddedPostgresJpaTest`):
+  `FlywayMigrationTest`, `SeedDataTest`, `UserRepositoryTest`.
+
+**Acceptance Criteria:**
+- [x] `flyway info` pokazuje sve migracije primenjene ("Success"). *(`FlywayMigrationTest`: nema
+  `pending`, V1 i V2 `applied`. Implicitno: `ddl-auto=validate` prolazi → entiteti se poklapaju sa šemom.)*
+- [x] Seed prolazi; `SELECT count(*) FROM security_policy WHERE is_active = true` = 1. *(`SeedDataTest`.)*
+- [x] Unit test (`@DataJpaTest`): repozitorijum može da kreira i pročita `User` red. *(`UserRepositoryTest`.)*
+
+**Verifikacija:** `mvn -f backend/pom.xml test` → BUILD SUCCESS, 7 testova, 0 grešaka
+(embedded PG16 binar — bez Dockera, bez lokalnog PG servisa).
+
+**Napomena (živi lokalni DB):** za `mvn spring-boot:run` protiv lokalnog Postgres 17 potrebno je
+jednokratno kreirati rolu `vault` i bazu `securevault` (vidi komandu u README/komitu). Testovi to
+ne zahtevaju (hermetični su).
