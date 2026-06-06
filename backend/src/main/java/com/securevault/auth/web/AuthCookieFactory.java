@@ -18,6 +18,9 @@ public class AuthCookieFactory {
     /** Ime refresh kolačića (access kolačić: {@link JwtCookieAuthenticationFilter#ACCESS_COOKIE}). */
     public static final String REFRESH_COOKIE = "sv_refresh";
 
+    /** Privremeni OIDC state/nonce kolačić (Faza 5). */
+    public static final String OIDC_STATE_COOKIE = "sv_oidc_state";
+
     private final boolean secure;
 
     public AuthCookieFactory(AuthProperties properties) {
@@ -41,11 +44,33 @@ public class AuthCookieFactory {
         return build(REFRESH_COOKIE, "", 0);
     }
 
+    /**
+     * OIDC state kolačić. {@code SameSite=Lax} (NE Strict) jer provajder vraća browser na
+     * callback cross-site GET-om — uz Strict kolačić ne bi bio poslat i state provera bi pala.
+     * Lax je dovoljan: šalje se na top-level navigacijama, a sadržaj je kratkoživeći potpisani
+     * token (ne sesija).
+     */
+    public ResponseCookie oidcState(String token, long maxAgeSec) {
+        return buildLax(OIDC_STATE_COOKIE, token, maxAgeSec);
+    }
+
+    public ResponseCookie clearOidcState() {
+        return buildLax(OIDC_STATE_COOKIE, "", 0);
+    }
+
     private ResponseCookie build(String name, String value, long maxAgeSec) {
+        return cookie(name, value, maxAgeSec, "Strict");
+    }
+
+    private ResponseCookie buildLax(String name, String value, long maxAgeSec) {
+        return cookie(name, value, maxAgeSec, "Lax");
+    }
+
+    private ResponseCookie cookie(String name, String value, long maxAgeSec, String sameSite) {
         return ResponseCookie.from(name, value)
                 .httpOnly(true)
                 .secure(secure)
-                .sameSite("Strict")
+                .sameSite(sameSite)
                 .path("/")
                 .maxAge(maxAgeSec)
                 .build();

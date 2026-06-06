@@ -7,7 +7,7 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - [x] Faza 2  — Klijentski Kripto Sloj
 - [x] Faza 3  — Registracija i Skladištenje Ključeva
 - [x] Faza 4  — Autentikacija (lozinka + MFA + sesije)
-- [ ] Faza 5  — OIDC Prijava
+- [x] Faza 5  — OIDC Prijava
 - [ ] Faza 6  — Vault CRUD
 - [ ] Faza 7  — Sigurno Deljenje
 - [ ] Faza 8  — Admin i Sigurnosne Politike
@@ -242,3 +242,69 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 
 > Napomena: `app.auth.cookie-secure` je u dev-u `false` (http://localhost); u produkciji/HTTPS
 > se pali preko `APP_COOKIE_SECURE=true`. Test forsira `true` da proveri `Secure` flag.
+
+---
+
+## Faza 5 — OIDC Prijava
+
+**Šta je urađeno:**
+- **Manualni OIDC authorization-code tok** (NE `oauth2Login` filter — ostajemo stateless sa
+  sopstvenim JWT kolačićima iz Faze 4). Donet je `spring-security-oauth2-jose` SAMO radi
+  Nimbus dekodera i OAuth2 validatora za proveru `id_token`-a.
+- **`config/OidcProperties`** (`app.oidc.*`, registrovan u `SecurityConfig`): `enabled`
+  (default `false` → `/auth/oidc/**` vraća `404`), `issuer`, `client-id/secret`,
+  `authorization-uri`, `token-uri`, `jwks-uri`, `redirect-uri`, `scopes`,
+  `post-login-redirect-uri`/`post-login-error-uri`, `state-ttl-sec`. Sve iz env-a
+  (`application.yml` + `.env.example` placeholderi).
+- **`auth/oidc/OidcAuthenticator`** (seam) — `authenticate(code, expectedNonce) → OidcIdentity`.
+  Produkcioni `HttpOidcAuthenticator`: razmena code-a na token endpointu (`RestClient`),
+  verifikacija `id_token`-a Nimbus dekoderom protiv JWKS-a (potpis + issuer + audience=client_id
+  + timestamp) i provera `nonce`. JWKS dekoder se gradi lenjivo (dok je OIDC isključen, bean
+  postoji ali ne dotiče mrežu). Vraća samo `sub` (+`email`) — NIKAD kripto materijal.
+- **`auth/oidc/OidcService`** — `start()` gradi authorization redirect URL + potpisani
+  state/nonce token (`JwtService.issueOidcState`, novi `typ=oidc_state`); `callback()` validira
+  state (CSRF: query `state` mora da odgovara potpisanom u kolačiću), verifikuje `id_token`,
+  mapira identitet na nalog, proverava `ACTIVE`, pa izdaje sesiju preko `TokenService.issueForLogin`
+  (isti par kolačića kao Faza 4). Svaki neuspeh → redirect na frontend error URL, bez sesijskih
+  kolačića i bez internih detalja.
+- **Mapiranje/povezivanje naloga** (`OidcService.resolveUser`) — prvo po `users.oidc_subject`
+  (već povezan nalog). Ako nema, pri PRVOJ prijavi povezuje po **verifikovanom email-u**
+  (`email_verified`): nalog sa istim email-om koji još nema `oidc_subject` se trajno poveže sa
+  Google `sub`. Bezbedno: provajder je potvrdio email, a OIDC sesija i dalje NE otključava vault
+  (master lozinka obavezna). Nalog koji već ima DRUGI `oidc_subject` se ne preuzima.
+- **`auth/web/OidcController`** — `GET /auth/oidc/start` (`302` + `sv_oidc_state` kolačić) i
+  `GET /auth/oidc/callback` (`302` na frontend; na uspeh postavlja `sv_access`+`sv_refresh`,
+  uvek poništava state kolačić). `AuthCookieFactory`: `sv_oidc_state` je **`SameSite=Lax`**
+  (NE Strict) — da preživi cross-site redirect sa provajdera; sesijski kolačići ostaju Strict.
+- **Zero-knowledge očuvan:** OIDC callback NE vraća vault materijal. Dodat zaštićeni
+  `GET /auth/vault-material` (`AuthService.vaultMaterial`) koji vraća SAMO šifrat
+  (`encUsk/encPrivateKey/...`); klijent ga dohvati posle OIDC sesije i lokalno pozove `unlock`
+  master lozinkom. Server i dalje ne vidi nijedan ključ.
+- **Frontend** — `features/auth/api.ts`: `oidcStartUrl()` (full-page navigacija, ne XHR) i
+  `fetchVaultMaterial()`. `login-form.tsx`: dugme „Prijava preko eksternog naloga (OIDC)" u
+  credentials fazi; po povratku (`/login?oidc=success`) nova `oidc-unlock` faza traži master
+  lozinku → `fetchMe` + `fetchVaultMaterial` → `unlockVault` → upis u memorijsku sesiju
+  (`oidc=error` prikazuje grešku; query param se čisti da refresh ne ponovi tok).
+
+**Acceptance Criteria:**
+- [x] Uspešan callback kreira sesiju i kolačiće kao u Fazi 4. *(`OidcFlowTest
+  .uspesanCallbackPostavljaSesijuAliNeVracaVaultMaterijal`: `302` na success URL, `sv_access`
+  + `sv_refresh` sa `HttpOnly`/`Secure`/`SameSite=Strict`, potom `/auth/me` sa access
+  kolačićem → `200`. `startPreusmeravaNaProvajdera...`: `302` na authorization URL +
+  `sv_oidc_state` `SameSite=Lax`. Negativni: nepovezan `sub` i nevažeći `state` → redirect na
+  error URL bez sesijskih kolačića.)*
+- [x] Posle OIDC logina vault je i dalje „locked" dok se ne unese master lozinka. *(Isti test:
+  callback odgovor NE sadrži `encUsk`/`encPrivateKey`; materijal se dobija tek posebnim
+  `GET /auth/vault-material`. Frontend `oidc.test.ts`: bez tačne master lozinke materijal se ne
+  otključava (`unlockVault` baca), a sa lozinkom rekonstruiše IDENTIČAN USK.)*
+
+**Verifikacija (lokalno, hand-installed JDK 21 + Maven 3.9.9 — bez Dockera):**
+- `mvn -f backend/pom.xml test` → **BUILD SUCCESS, 22 testa, 0 grešaka** (4 nova u `OidcFlowTest`,
+  `@SpringBootTest` + MockMvc nad embedded PG16; `OidcAuthenticator` zamenjen stubom — bez živog
+  provajdera).
+- `npm test` (`frontend/`) → **9 test fajlova, 23 testa, 0 grešaka** (2 nova u `oidc.test.ts`).
+- `npm run build` (`tsc && vite build`) → čist type-check + build.
+
+> Napomena: `app.oidc.enabled=false` podrazumevano → `/auth/oidc/**` je `404` dok admin ne
+> konfiguriše provajdera (env `OIDC_*`). Povezivanje naloga sa `oidc_subject` je van OIDC toka
+> (OIDC ovde samo prijavljuje već povezane naloge).

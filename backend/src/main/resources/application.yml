@@ -49,3 +49,22 @@ app:
     # Secure flag na sesijskim kolačićima. Dev je http://localhost (false); u
     # produkciji/dockeru se pali preko APP_COOKIE_SECURE=true.
     cookie-secure: ${APP_COOKIE_SECURE:false}
+
+  # Faza 5 — OIDC prijava. Podrazumevano isključeno (/auth/oidc/** vraća 404) dok se ne
+  # konfiguriše eksterni provajder. OIDC daje SAMO sesiju — master lozinka je i dalje
+  # obavezna za otključavanje vault-a (zero-knowledge očuvan).
+  oidc:
+    enabled: ${OIDC_ENABLED:false}
+    issuer: ${OIDC_ISSUER:}
+    client-id: ${OIDC_CLIENT_ID:}
+    client-secret: ${OIDC_CLIENT_SECRET:}
+    authorization-uri: ${OIDC_AUTHORIZATION_URI:}
+    token-uri: ${OIDC_TOKEN_URI:}
+    jwks-uri: ${OIDC_JWKS_URI:}
+    # Provajder vraća browser ovde (kroz gateway). Mora biti registrovan kod provajdera.
+    redirect-uri: ${OIDC_REDIRECT_URI:http://localhost:8080/api/auth/oidc/callback}
+    scopes: ${OIDC_SCOPES:openid email profile}
+    # Frontend stranice na koje se browser vraća posle OIDC toka.
+    post-login-redirect-uri: ${OIDC_POST_LOGIN_REDIRECT_URI:http://localhost:5173/login?oidc=success}
+    post-login-error-uri: ${OIDC_POST_LOGIN_ERROR_URI:http://localhost:5173/login?oidc=error}
+    state-ttl-sec: ${OIDC_STATE_TTL_SEC:300}

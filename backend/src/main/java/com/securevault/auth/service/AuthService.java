@@ -156,6 +156,20 @@ public class AuthService {
         return AuthUserResponse.from(user);
     }
 
+    /**
+     * Šifrovani vault materijal za autentikovanog korisnika (za {@code GET /auth/vault-material}).
+     *
+     * <p>Koristi se posle OIDC prijave (Faza 5) gde sesija postoji ali vault još nije otključan:
+     * klijent dohvati ovaj (samo šifrat) materijal i lokalno pozove {@code unlock} sa master
+     * lozinkom. Server i dalje ne može ništa dešifrovati — zero-knowledge je očuvan.
+     */
+    @Transactional(readOnly = true)
+    public VaultMaterial vaultMaterial(UUID userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UnauthorizedException("Nalog ne postoji."));
+        return VaultMaterial.from(user);
+    }
+
     private User requireMfaUser(String mfaTicket) {
         Claims claims;
         try {

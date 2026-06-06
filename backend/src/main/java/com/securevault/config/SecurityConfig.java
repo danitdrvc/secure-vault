@@ -26,7 +26,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * njih štiti bcrypt + TOTP + MFA tiket na nivou servisa. Sve ostalo zahteva važeći access token.
  */
 @Configuration
-@EnableConfigurationProperties(AuthProperties.class)
+@EnableConfigurationProperties({AuthProperties.class, OidcProperties.class})
 public class SecurityConfig {
 
     @Bean
@@ -42,6 +42,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/health", "/users/register").permitAll()
                         .requestMatchers("/auth/login/**", "/auth/totp/**", "/auth/refresh").permitAll()
+                        // OIDC redirect tok (start/callback) je javan — štite ga state/nonce + verifikacija id_token-a.
+                        .requestMatchers("/auth/oidc/**").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(entryPoint)
