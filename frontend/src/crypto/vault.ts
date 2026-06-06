@@ -96,6 +96,20 @@ export async function bootstrapKeys(password: string): Promise<BootstrapResult> 
 }
 
 /**
+ * Izvodi `authKey` iz master lozinke za login (isti put kao u `bootstrapKeys`:
+ * PBKDF2 → HKDF `info="vault-auth"`). Server poredi `bcrypt(authKey)`; master lozinka
+ * i KEK NIKAD ne napuštaju čitač.
+ */
+export async function deriveLoginAuthKey(
+  password: string,
+  kdfSalt: Bytes,
+  kdfIterations: number,
+): Promise<Bytes> {
+  const masterKey = await deriveMasterKey(password, kdfSalt, kdfIterations)
+  return deriveAuthKey(masterKey)
+}
+
+/**
  * Otključava vault iz lozinke i šifrovanih artefakata.
  *
  * Rekonstruiše KEK iz lozinke, njime dešifruje USK, pa USK-om dešifruje privatni

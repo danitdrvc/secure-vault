@@ -17,7 +17,7 @@ export {
   exportPrivateKey,
   importPrivateKey,
 } from './asym'
-export { bootstrapKeys, unlock } from './vault'
+export { bootstrapKeys, unlock, deriveLoginAuthKey } from './vault'
 export type {
   RegistrationArtifacts,
   UnlockedVault,
