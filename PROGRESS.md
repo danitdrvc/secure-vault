@@ -72,6 +72,8 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 **Verifikacija:** `mvn -f backend/pom.xml test` → BUILD SUCCESS, 7 testova, 0 grešaka
 (embedded PG16 binar — bez Dockera, bez lokalnog PG servisa).
 
-**Napomena (živi lokalni DB):** za `mvn spring-boot:run` protiv lokalnog Postgres 17 potrebno je
-jednokratno kreirati rolu `vault` i bazu `securevault` (vidi komandu u README/komitu). Testovi to
-ne zahtevaju (hermetični su).
+**Živi lokalni DB (verifikovano 2026-06-06):** kreirani rola `vault` + baza `securevault` +
+`pgcrypto` u lokalnom Postgres 17. Na startu (`spring-boot:run`) Flyway ispisuje
+`Successfully applied 2 migrations ... now at version v2`; `flyway_schema_history` V1+V2 = success;
+živi `SELECT count(*) FROM security_policy WHERE is_active = true` = 1; admin + 3 honeytokena prisutni.
+(Testovi su hermetični i ne zavise od ovoga.)
