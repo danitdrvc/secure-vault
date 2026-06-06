@@ -31,12 +31,16 @@ public class JwtService {
     public static final String TYPE_ACCESS = "access";
     public static final String TYPE_REFRESH = "refresh";
     public static final String TYPE_MFA = "mfa";
+    /** Privremeni potpisani state/nonce token tokom OIDC redirect toka (Faza 5). */
+    public static final String TYPE_OIDC_STATE = "oidc_state";
 
     private static final String CLAIM_TYPE = "typ";
     private static final String CLAIM_USERNAME = "username";
     private static final String CLAIM_ROLE = "role";
     /** Session expiry — apsolutni cap trajanja sesije (epoch sekunde). */
     private static final String CLAIM_SESSION_EXP = "sxp";
+    private static final String CLAIM_STATE = "state";
+    private static final String CLAIM_NONCE = "nonce";
 
     private final SecretKey key;
     private final String issuer;
@@ -95,6 +99,35 @@ public class JwtService {
                 .expiration(Date.from(now.plusSeconds(ttlSeconds)))
                 .signWith(key)
                 .compact();
+    }
+
+    /**
+     * Kratkoživeći potpisani token koji nosi OIDC {@code state} i {@code nonce}. Čuva se u
+     * HttpOnly kolačiću tokom redirect toka; na callback-u se verifikuje da {@code state} iz
+     * query parametra odgovara onome iz potpisanog kolačića (CSRF zaštita), a {@code nonce}
+     * se prosleđuje proveri id_token-a.
+     */
+    public String issueOidcState(String state, String nonce, int ttlSeconds) {
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .id(UUID.randomUUID().toString())
+                .issuer(issuer)
+                .subject("oidc")
+                .claim(CLAIM_TYPE, TYPE_OIDC_STATE)
+                .claim(CLAIM_STATE, state)
+                .claim(CLAIM_NONCE, nonce)
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(ttlSeconds)))
+                .signWith(key)
+                .compact();
+    }
+
+    public String stateValue(Claims claims) {
+        return claims.get(CLAIM_STATE, String.class);
+    }
+
+    public String nonceValue(Claims claims) {
+        return claims.get(CLAIM_NONCE, String.class);
     }
 
     /**

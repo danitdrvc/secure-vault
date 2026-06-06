@@ -80,6 +80,16 @@ public class AuthController {
         return authService.me(principal.id());
     }
 
+    /**
+     * Šifrovani vault materijal za otključavanje (Faza 5). Zahteva važeću sesiju, ali sam
+     * materijal je beskoristan bez master lozinke — koristi ga klijent posle OIDC prijave da
+     * lokalno pozove {@code unlock}.
+     */
+    @GetMapping("/vault-material")
+    public VaultMaterial vaultMaterial(@AuthenticationPrincipal AuthenticatedUser principal) {
+        return authService.vaultMaterial(principal.id());
+    }
+
     /** Postavlja oba sesijska kolačića (access + refresh) na odgovor. */
     private ResponseEntity.BodyBuilder withSessionCookies(TokenService.IssuedTokens tokens) {
         ResponseCookie access = cookieFactory.access(tokens.accessToken(), tokens.accessMaxAgeSec());

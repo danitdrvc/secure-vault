@@ -1,19 +1,23 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import { useSession } from '../../context/session-context'
 import { computeAuthKey, unlockVault } from './login'
 import {
   fetchLoginParams,
+  fetchMe,
+  fetchVaultMaterial,
   loginStep1,
   loginStep2,
+  oidcStartUrl,
   totpSetup,
   totpVerify,
 } from './api'
 import type { TotpSetupResponse } from './api'
 
 /** Faze login toka prikazane korisniku. */
-type Phase = 'credentials' | 'totp-setup' | 'totp' | 'done'
+type Phase = 'credentials' | 'totp-setup' | 'totp' | 'oidc-unlock' | 'done'
 type Status = 'idle' | 'busy' | 'error'
 
 /** Iz axios/greške izvlači poruku iz konzistentnog oblika { error: { message } }. */
@@ -39,6 +43,7 @@ function extractError(err: unknown): string {
  */
 export default function LoginForm() {
   const session = useSession()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [phase, setPhase] = useState<Phase>('credentials')
   const [status, setStatus] = useState<Status>('idle')
   const [message, setMessage] = useState('')
@@ -51,6 +56,48 @@ export default function LoginForm() {
   const [setupInfo, setSetupInfo] = useState<TotpSetupResponse | null>(null)
 
   const busy = status === 'busy'
+
+  // Posle OIDC redirect-a backend vraća na /login?oidc=success|error. Sesija (kolačići) tada
+  // postoji, ali vault je JOŠ ZAKLJUČAN — tražimo master lozinku da bismo lokalno otključali
+  // (OIDC ne daje ključ; zero-knowledge očuvan). Query param čistimo da refresh ne ponovi tok.
+  useEffect(() => {
+    const oidc = searchParams.get('oidc')
+    if (oidc === 'success') {
+      setPhase('oidc-unlock')
+      setMessage('Eksterna prijava uspešna. Unesite master lozinku da otključate vault.')
+      setStatus('idle')
+      setSearchParams({}, { replace: true })
+    } else if (oidc === 'error') {
+      setPhase('credentials')
+      setStatus('error')
+      setMessage('Eksterna (OIDC) prijava nije uspela. Pokušajte ponovo.')
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
+
+  function startOidc() {
+    // FULL-PAGE navigacija: browser mora da prati 302 ka provajderu i primi state kolačić.
+    window.location.href = oidcStartUrl()
+  }
+
+  /** OIDC: postojeća sesija + master lozinka → dohvat šifrovanog materijala → unlock u memoriji. */
+  async function onOidcUnlock(event: FormEvent) {
+    event.preventDefault()
+    setStatus('busy')
+    setMessage('')
+    try {
+      const [user, material] = await Promise.all([fetchMe(), fetchVaultMaterial()])
+      const vault = await unlockVault(password, material)
+      session.setSession(user, vault)
+      setPassword('')
+      setPhase('done')
+      setStatus('idle')
+      setMessage(`Prijavljeni ste kao "${user.username}". Vault je otključan u memoriji.`)
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }
 
   async function onCredentials(event: FormEvent) {
     event.preventDefault()
@@ -168,6 +215,36 @@ export default function LoginForm() {
           </label>
           <button type="submit" disabled={busy}>
             {busy ? 'Provera...' : 'Dalje'}
+          </button>
+          <div style={{ marginTop: 12, borderTop: '1px solid #eee', paddingTop: 12 }}>
+            <button type="button" onClick={startOidc} disabled={busy}>
+              Prijava preko eksternog naloga (OIDC)
+            </button>
+            <p style={{ fontSize: 12, color: '#666', marginTop: 6 }}>
+              OIDC daje samo sesiju — master lozinku ćete i dalje uneti da otključate vault.
+            </p>
+          </div>
+        </form>
+      )}
+
+      {phase === 'oidc-unlock' && (
+        <form onSubmit={onOidcUnlock}>
+          <p style={{ fontSize: 14 }}>
+            Eksterna prijava je uspešna, ali vault je i dalje zaključan. Unesite master lozinku
+            da otključate ključeve (oni nikad ne napuštaju čitač).
+          </p>
+          <label style={fieldStyle}>
+            Master lozinka
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </label>
+          <button type="submit" disabled={busy}>
+            {busy ? 'Otključavanje...' : 'Otključaj vault'}
           </button>
         </form>
       )}

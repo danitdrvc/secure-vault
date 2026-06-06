@@ -3,6 +3,7 @@
  * (vidi `registration.ts`); ovaj sloj samo šalje HTTP zahtev.
  */
 import { apiClient } from '../../api/client'
+import { gatewayUrl } from '../../config'
 
 /** Telo registracije — svaki kripto artefakt je base64 string (server ih čuva kao bytea). */
 export interface RegisterRequest {
@@ -101,5 +102,25 @@ export async function refreshSession(): Promise<void> {
 
 export async function fetchMe(): Promise<AuthUser> {
   const res = await apiClient.get<AuthUser>('/auth/me')
+  return res.data
+}
+
+// ----- Faza 5: OIDC prijava -----
+
+/**
+ * URL za pokretanje OIDC prijave. Mora biti FULL-PAGE navigacija (`window.location`), ne XHR —
+ * backend odgovara 302 redirect-om na eksternog provajdera, a browser mora da ga prati i da
+ * primi `SameSite=Lax` state kolačić. (`/api` prefiks: gateway mapira `/api/**` → backend.)
+ */
+export function oidcStartUrl(): string {
+  return `${gatewayUrl}/api/auth/oidc/start`
+}
+
+/**
+ * Šifrovani vault materijal za autentikovanu sesiju (posle OIDC prijave). Sam materijal je
+ * beskoristan bez master lozinke — klijent ga koristi da lokalno pozove `unlock`.
+ */
+export async function fetchVaultMaterial(): Promise<VaultMaterial> {
+  const res = await apiClient.get<VaultMaterial>('/auth/vault-material')
   return res.data
 }

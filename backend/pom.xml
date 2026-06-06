@@ -89,6 +89,15 @@
             <version>${totp.version}</version>
         </dependency>
 
+        <!-- Faza 5: OIDC prijava. Donosi Nimbus JWT dekoder (NimbusJwtDecoder) i OAuth2
+             validatore (issuer/timestamp/audience) za proveru id_token-a protiv provajderovog
+             JWKS-a. NE koristimo oauth2Login filter (ostajemo stateless sa sopstvenim JWT
+             kolačićima) — samo verifikaciju id_token-a. -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-jose</artifactId>
+        </dependency>
+
         <!-- Flyway: verzionisanje šeme; auto-migrate na startu (Spring Boot integracija). -->
         <dependency>
             <groupId>org.flywaydb</groupId>
