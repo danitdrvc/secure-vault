@@ -55,6 +55,13 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- Faza 10: Admin alarmi (email notifikacija kada honeytoken okine). Konfiguracija
+             spring.mail.host je opcionalna — bez nje se alarm samo loguje (WARN). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
+        </dependency>
+
         <!-- Faza 4: pun Spring Security filter chain (autentikacija, autorizacija po ulogama,
              stateless sesije sa JWT u HttpOnly kolačićima). Donosi i BCryptPasswordEncoder
              (bcrypt(authKey)) koji je u Fazi 3 dolazio iz samostalnog spring-security-crypto. -->

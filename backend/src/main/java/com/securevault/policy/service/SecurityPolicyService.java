@@ -74,6 +74,12 @@ public class SecurityPolicyService {
         return PolicyResponse.from(saved);
     }
 
+    /** Vraća {@code true} ako je admin uključio ranjivi honeypot test-endpoint. */
+    @Transactional(readOnly = true)
+    public boolean isHoneypotEndpointEnabled() {
+        return activePolicy().isHoneypotEndpoint();
+    }
+
     private SecurityPolicy activePolicy() {
         return policyRepository.findFirstByActiveTrue()
                 .orElseThrow(() -> new IllegalStateException("Nema aktivne security_policy."));

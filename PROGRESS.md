@@ -12,7 +12,7 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - [x] Faza 7  — Sigurno Deljenje
 - [x] Faza 8  — Admin i Sigurnosne Politike
 - [x] Faza 9  — API Gateway i Rate Limiting
-- [ ] Faza 10 — Honeypot i Honeytokens
+- [x] Faza 10 — Honeypot i Honeytokens
 - [ ] Faza 11 — Imutable Audit Log
 - [ ] Faza 12 — Integracija i Hardening (Dockerizacija preskočena)
 
@@ -580,3 +580,63 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 > Napomena: za pravo pokretanje gateway-a (`mvn spring-boot:run`) potreban je živi Redis 7
 > (`REDIS_HOST`/`REDIS_PORT`) jer RedisRateLimiter i IpGuard brojači žive u Redisu. Testovi su
 > hermetični i ne zavise od toga.
+
+---
+
+## Faza 10 — Honeypot i Honeytokens
+
+**Šta je urađeno:**
+- **Okidač pri direktnom pristupu honeytoken tajni** — `VaultService.requireVisibleSecret` sada prima
+  i `userId`; kad detektuje `is_honeytoken=true`, poziva `HoneypotService.triggerHoneypot(userId, ip, secretId)`
+  (propagacija `REQUIRES_NEW` — komituje nezavisno od spoljašnjeg rollback-a koji sledi) i tek onda baca
+  `404`. Korisnik je zamrznut, `security_event` komitovan, admin alarm logovan — sve pre nego što klijent
+  vidi odgovor. Svaki od 5 call-site-ova `requireVisibleSecret` (`get`, `update`, `delete`, `listAccess`,
+  `rotate`, `share`) prosleđuje odgovarajući `userId`/`sharerId`.
+- **`HoneypotService`** (`honeypot/service/`) — centralna logika:
+  - `triggerHoneypot(userId, ip, secretId)` (`@Transactional(REQUIRES_NEW)`): zamrzne nalog ako je
+    `ACTIVE`, upiše `HONEYPOT_HIT` event, upiše audit stub `HONEYPOT_TRIGGERED`, pozove `adminAlertService`.
+  - `vulnerableSearch(callerId, ip, label)` (`@Transactional`): gradi SQL upit **NAMERNO** konkatenacijom
+    korisničkog unosa (demonstracija SQL injection-a); ako query vrati honeytoken redove, okida `doFreezeAndRecord`
+    (isti helper) na pozivaocu.
+- **`AdminAlertService`** (`honeypot/service/`) — alarm adminu: uvek WARN log; šalje email ako je
+  `spring.mail.host` konfigurisan (Spring Boot `MailSenderAutoConfiguration` kreira `JavaMailSender` bean
+  samo tada — `Optional<JavaMailSender>` je `Optional.empty()` u testovima bez mail konfiguracije).
+  Primaoc se konfiguriše preko `app.alert.admin-email` (`ADMIN_EMAIL` env).
+- **Ranjivi endpoint** (`honeypot/web/HoneypotController`):
+  - `GET /honeypot/search?label=<unos>` — zahteva autentikaciju (da bi se identifikovao nalog koji se
+    zamrzava). Proverava `SecurityPolicyService.isHoneypotEndpointEnabled()` — ako je `false` → `404`.
+    SQLi payload tipa `' OR '1'='1' --` zaobiđe filter i vrati sve honeytokene iz `honeytoken` tabele,
+    što okine alarm na pozivaocu.
+- **`SecurityPolicyService`** — dodata `isHoneypotEndpointEnabled()` metoda.
+- **`pom.xml`** — dodata `spring-boot-starter-mail` zavisnost (opciona — bez `spring.mail.host` nema auto-konfiguracije i nema greške na startu/testovima).
+- **`application.yml`** — dodate `spring.mail.*` i `app.alert.admin-email` konfiguracije (sve iz env varijabli, prazno po defaultu → bez efekta).
+
+**Acceptance Criteria:**
+- [x] Direktan pristup honeytoken tajni → `404` + nalog `FROZEN` + `security_event(HONEYPOT_HIT)` kreiran.
+  *(`HoneypotEndpointTest.direktanPristupHoneytokenTajniZamrzavaKorisnika`: ubačen honeytoken, korisnik
+  pristupi `GET /vault/secrets/{id}` → `404`; `userRepository` odmah potvrđuje `FROZEN`; `security_event`
+  count raste; `findByTypeOrderByCreatedAtDesc("HONEYPOT_HIT")` vraća event sa tačnim `userId`.)*
+- [x] `GET /vault/secrets` i dalje ne otkriva honeytokene.
+  *(`listingNikadNeOtkrivаHoneytokene`: prava tajna prisutna, honeytoken odsutan; korisnik ostaje `ACTIVE`
+  jer listing ne okida honeypot.)*
+- [x] Sa `honeypot_endpoint=false`, endpoint vraća `404`.
+  *(`ranjivEndpointVraca404KadaJeIsklučen`: flag se isključi pre poziva → `404`.)*
+- [x] Normalna pretraga bez pogotka → korisnik ostaje `ACTIVE`.
+  *(`normalnaPretragazBezPogotkaNeZamrzavaKorisnika`: label koji ne postoji → prazna lista; korisnik `ACTIVE`.)*
+- [x] SQLi payload koji dohvati honeytoken → nalog `FROZEN` + `security_event` kreiran + admin alarm poslat.
+  *(`sqliPayloadKojiPogodjiHoneytokenZamrzavaKorisnika`: `' OR '1'='1' --` → lista sa honeytokenom →
+  korisnik `FROZEN`; `HONEYPOT_HIT` event sa tačnim `userId`. Admin alarm: WARN log u konzoli (email
+  se šalje samo ako je `MAIL_HOST` konfigurisan — u testovima je prazno, alarm logovan).)*
+- [x] Zamrznut nalog ne može da se uloguje (403 u step1).
+  *(`zamrznutNalogNeMozeDaSeUloguje`: po zamrzavanju login sa tačnim `authKey` → `403`.)*
+
+**Verifikacija (lokalno, hand-installed JDK 21 + Maven 3.9.9 — bez Dockera):**
+- `mvn -f backend/pom.xml test` → **BUILD SUCCESS, 61 testa, 0 grešaka** (6 novih u `HoneypotEndpointTest`,
+  `@SpringBootTest` + MockMvc nad embedded PG16; svi prethodni testovi nepromenjeni — `listaNikadNeVracaHoneytokene` u `VaultCrudTest` i dalje prolazi jer honeypot WARN log ne ometa test; `REQUIRES_NEW` osigurava da event bude vidljiv čak i posle rollback-a spoljašnje transakcije).
+- `npm test` (`frontend/`) → bez promena (Faza 10 je čisto backend).
+- `npm run build` → bez promena.
+
+> Napomena: endpoint je namerno ranjiv na SQL injection — nije greška već edukativna demonstracija
+> kontrolisana `policy.honeypot_endpoint` flegom. U produkcijskom okruženju flag treba da bude `false`.
+> Pravi okidač (FROZEN + event) radi i kad endpoint nije aktivan — svaki direktan pristup honeytoken
+> tajni kroz regularni API (`GET/PUT/DELETE/share/rotate`) okida alarm.

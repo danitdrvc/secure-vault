@@ -33,6 +33,20 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
 
+  # Faza 10 — Email za admin alarme (honeypot okidač). Sve vrednosti su opcionalne;
+  # bez spring.mail.host alarm se samo loguje na WARN nivou (email se ne šalje).
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
 # Faza 4 — Autentikacija. TTL-ovi (access/refresh/session) NISU ovde: oni dolaze iz aktivne
 # security_policy (admin ih menja u Fazi 8). Ovde su samo tajne i ne-politički parametri.
 app:
@@ -49,6 +63,10 @@ app:
     # Secure flag na sesijskim kolačićima. Dev je http://localhost (false); u
     # produkciji/dockeru se pali preko APP_COOKIE_SECURE=true.
     cookie-secure: ${APP_COOKIE_SECURE:false}
+
+  # Faza 10 — Email adresa admina za alarm kada okine honeytoken. Ako je prazna, alarm se samo loguje.
+  alert:
+    admin-email: ${ADMIN_EMAIL:}
 
   # Faza 9 — Interni (server-to-server) pozivi sa gateway-a (npr. prijava IP_BLOCKED događaja).
   # Deljeni token koji backend zahteva u X-Internal-Token zaglavlju na /internal/** rutama.

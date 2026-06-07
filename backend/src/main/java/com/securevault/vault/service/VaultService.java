@@ -5,6 +5,7 @@ import com.securevault.common.error.ConflictException;
 import com.securevault.common.error.ForbiddenException;
 import com.securevault.common.error.NotFoundException;
 import com.securevault.common.error.ValidationException;
+import com.securevault.honeypot.service.HoneypotService;
 import com.securevault.user.repository.UserRepository;
 import com.securevault.vault.domain.Secret;
 import com.securevault.vault.domain.SecretAccess;
@@ -46,15 +47,18 @@ public class VaultService {
     private final SecretAccessRepository secretAccessRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final HoneypotService honeypotService;
 
     public VaultService(SecretRepository secretRepository,
                         SecretAccessRepository secretAccessRepository,
                         UserRepository userRepository,
-                        AuditService auditService) {
+                        AuditService auditService,
+                        HoneypotService honeypotService) {
         this.secretRepository = secretRepository;
         this.secretAccessRepository = secretAccessRepository;
         this.userRepository = userRepository;
         this.auditService = auditService;
+        this.honeypotService = honeypotService;
     }
 
     /**
@@ -96,11 +100,11 @@ public class VaultService {
 
     /**
      * Pun (šifrovan) sadržaj tajne za korisnika. Korisnik bez pristupnog reda dobija {@code 403};
-     * honeytoken/nepostojeća tajna → {@code 404}.
+     * honeytoken/nepostojeća tajna → {@code 404} (plus okidač zamrzavanja iz Faze 10).
      */
     @Transactional(readOnly = true)
     public SecretDetailResponse get(UUID userId, UUID secretId) {
-        Secret secret = requireVisibleSecret(secretId);
+        Secret secret = requireVisibleSecret(secretId, userId);
         SecretAccess access = secretAccessRepository.findBySecretIdAndUserId(secretId, userId)
                 .orElseThrow(() -> new ForbiddenException("Nemate pristup ovoj tajni."));
         return SecretDetailResponse.from(secret, access.getWrappedSecretKey());
@@ -112,7 +116,7 @@ public class VaultService {
      */
     @Transactional
     public SecretSummaryResponse update(UUID userId, UUID secretId, UpdateSecretRequest request) {
-        Secret secret = requireVisibleSecret(secretId);
+        Secret secret = requireVisibleSecret(secretId, userId);
         requireOwner(secret, userId);
 
         secret.setName(request.name());
@@ -129,7 +133,7 @@ public class VaultService {
      */
     @Transactional(readOnly = true)
     public List<SecretAccessResponse> listAccess(UUID userId, UUID secretId) {
-        Secret secret = requireVisibleSecret(secretId);
+        Secret secret = requireVisibleSecret(secretId, userId);
         requireOwner(secret, userId);
         return secretAccessRepository.findBySecretId(secretId).stream()
                 .map(SecretAccessResponse::from)
@@ -148,7 +152,7 @@ public class VaultService {
      */
     @Transactional
     public SecretSummaryResponse rotate(UUID userId, UUID secretId, RotateSecretRequest request) {
-        Secret secret = requireVisibleSecret(secretId);
+        Secret secret = requireVisibleSecret(secretId, userId);
         requireOwner(secret, userId);
 
         List<SecretAccess> accesses = secretAccessRepository.findBySecretId(secretId);
@@ -184,7 +188,7 @@ public class VaultService {
     /** Briše tajnu (i sve njene pristupne redove). Samo vlasnik sme da briše. */
     @Transactional
     public void delete(UUID userId, UUID secretId) {
-        Secret secret = requireVisibleSecret(secretId);
+        Secret secret = requireVisibleSecret(secretId, userId);
         requireOwner(secret, userId);
 
         secretAccessRepository.deleteBySecretId(secretId);
@@ -202,7 +206,7 @@ public class VaultService {
      */
     @Transactional
     public ShareResponse share(UUID sharerId, UUID secretId, ShareSecretRequest request) {
-        Secret secret = requireVisibleSecret(secretId);
+        Secret secret = requireVisibleSecret(secretId, sharerId);
 
         // Onaj ko deli mora i sam imati pristup (vlasnik ili raniji primalac) — inače ne poseduje
         // secretKey i deljenje ne bi imalo smisla (server to ne može kriptografski da proveri,
@@ -231,12 +235,17 @@ public class VaultService {
         return ShareResponse.from(saved);
     }
 
-    /** Učitava tajnu; honeytoken i nepostojeća tajna se jednako tretiraju kao {@code 404}. */
-    private Secret requireVisibleSecret(UUID secretId) {
+    /**
+     * Učitava tajnu; honeytoken i nepostojeća tajna se tretiraju kao {@code 404}.
+     * Pristup honeytokenu DODATNO okida zamrzavanje naloga + {@code HONEYPOT_HIT} event (Faza 10).
+     * Okidač koristi {@code REQUIRES_NEW} transakciju kako bi bio komitovan čak i kada spoljašnja
+     * transakcija bude rollback-ovana posle {@code NotFoundException}.
+     */
+    private Secret requireVisibleSecret(UUID secretId, UUID userId) {
         Secret secret = secretRepository.findById(secretId)
                 .orElseThrow(() -> new NotFoundException("Tajna ne postoji."));
         if (secret.isHoneytoken()) {
-            // Honeytoken se ne sme otkriti regularnom API-ju (Faza 10 dodaje okidač pri pristupu).
+            honeypotService.triggerHoneypot(userId, null, secretId);
             throw new NotFoundException("Tajna ne postoji.");
         }
         return secret;
