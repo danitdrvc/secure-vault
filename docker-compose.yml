@@ -35,7 +35,9 @@ services:
 
   backend:
     build: ./backend
-    # Faza 0: backend nudi samo /health; DB/Redis se koriste od Faze 1.
+    environment:
+      # Faza 9: deljeni token za interne (server-to-server) pozive sa gateway-a.
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-only-insecure-internal-token-change-me}
     ports:
       - "8081:8081"
     depends_on:
@@ -51,10 +53,17 @@ services:
     environment:
       BACKEND_URI: ${BACKEND_URI:-http://backend:8081}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
+      # Faza 9: RedisRateLimiter + IpGuardFilter brojači (Redis je u istoj mreži).
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-only-insecure-internal-token-change-me}
     ports:
       - "8080:8080"
     depends_on:
-      - backend
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
     networks:
       - vault-net
 

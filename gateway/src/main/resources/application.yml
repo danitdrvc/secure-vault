@@ -4,16 +4,44 @@ server:
 spring:
   application:
     name: secure-vault-gateway
+
+  # Faza 9: Redis je backing store i za RedisRateLimiter (RequestRateLimiter) i za
+  # IpGuardFilter brojače/blok-liste. Host/port iz env-a (u docker mreži host = `redis`).
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
   cloud:
     gateway:
       routes:
-        # Sav backend saobraćaj ide kroz /api/** -> backend (StripPrefix skida /api).
+        # Striktan rate-limit na login tok (brute-force površina). Mora biti PRE opšte /api/**
+        # rute jer se predikati evaluiraju redom — prvi koji se poklopi pobeđuje.
+        - id: auth-login
+          uri: ${BACKEND_URI:http://localhost:8081}
+          predicates:
+            - Path=/api/auth/login/**
+          filters:
+            - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@ipKeyResolver}"
+                redis-rate-limiter.replenishRate: ${RL_LOGIN_RATE:5}
+                redis-rate-limiter.burstCapacity: ${RL_LOGIN_BURST:10}
+                redis-rate-limiter.requestedTokens: 1
+        # Sav ostali backend saobraćaj: blaži globalni limit. StripPrefix skida /api.
         - id: backend
           uri: ${BACKEND_URI:http://localhost:8081}
           predicates:
             - Path=/api/**
           filters:
             - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@ipKeyResolver}"
+                redis-rate-limiter.replenishRate: ${RL_GLOBAL_RATE:20}
+                redis-rate-limiter.burstCapacity: ${RL_GLOBAL_BURST:40}
+                redis-rate-limiter.requestedTokens: 1
       globalcors:
         cors-configurations:
           '[/**]':
@@ -21,3 +49,17 @@ spring:
             allowedMethods: "*"
             allowedHeaders: "*"
             allowCredentials: true
+
+# Faza 9 — IpGuardFilter: detekcija brute-force login-a i sumnjivih (SQLi/payload) sekvenci po IP.
+# Prag neuspeha/strike-ova u prozoru -> privremeni blok (429) + prijava IP_BLOCKED događaja backendu.
+app:
+  ipguard:
+    # Broj "strike"-ova (neuspeli login ili sumnjiv zahtev) posle kojeg se IP blokira.
+    max-strikes: ${IPGUARD_MAX_STRIKES:5}
+    # Prozor u kome se strike-ovi broje (sekunde); istek -> brojač se resetuje.
+    strike-window-sec: ${IPGUARD_WINDOW_SEC:60}
+    # Trajanje privremenog bloka IP-a (sekunde).
+    block-ttl-sec: ${IPGUARD_BLOCK_TTL_SEC:300}
+  # Prijava sigurnosnih događaja backendu (server-to-server, /internal/**).
+  backend-uri: ${BACKEND_URI:http://localhost:8081}
+  internal-token: ${INTERNAL_TOKEN:dev-only-insecure-internal-token-change-me}
