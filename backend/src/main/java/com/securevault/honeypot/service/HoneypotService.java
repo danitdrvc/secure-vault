@@ -103,7 +103,7 @@ public class HoneypotService {
             }
         });
         securityEventService.record("HONEYPOT_HIT", userId, ip, detail);
-        auditService.record("HONEYPOT_TRIGGERED", userId, "honeypot", "{}");
+        auditService.append("HONEYPOT_TRIGGERED", userId, "honeypot", "{}");
         adminAlertService.alertHoneypotHit(userId, ip);
     }
 }

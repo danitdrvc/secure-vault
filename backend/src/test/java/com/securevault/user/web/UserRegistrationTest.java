@@ -100,13 +100,14 @@ class UserRegistrationTest {
         assertThat(saved.getKdfSalt()).hasSize(16);
         assertThat(saved.getKdfIterations()).isEqualTo(600_000);
 
-        // Audit zapis registracije (stub lanac: prevHash = GENESIS).
+        // Audit zapis registracije je deo imutabilnog hash-lanca (Faza 11): povezuje se na prethodni
+        // zapis preko prevHash (ili GENESIS ako je prvi u lancu), a hash je SHA-256 (64 hex znaka).
         List<AuditLog> logs = auditLogRepository.findByActorIdOrderBySeqAsc(saved.getId());
         assertThat(logs).hasSize(1);
         AuditLog log = logs.get(0);
         assertThat(log.getAction()).isEqualTo("USER_REGISTERED");
-        assertThat(log.getPrevHash()).isEqualTo("GENESIS");
-        assertThat(log.getHash()).hasSize(64);
+        assertThat(log.getPrevHash()).matches("GENESIS|[0-9a-f]{64}");
+        assertThat(log.getHash()).matches("[0-9a-f]{64}");
     }
 
     @Test

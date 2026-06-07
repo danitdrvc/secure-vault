@@ -70,7 +70,7 @@ public class SecurityPolicyService {
         policy.setUpdatedById(adminId);
 
         SecurityPolicy saved = policyRepository.save(policy);
-        auditService.record("POLICY_UPDATED", adminId, "security_policy/" + saved.getId(), "{}");
+        auditService.append("POLICY_UPDATED", adminId, "security_policy/" + saved.getId(), "{}");
         return PolicyResponse.from(saved);
     }
 

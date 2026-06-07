@@ -124,7 +124,7 @@ public class AuthService {
         }
         user.setTotpEnabled(true);
         userRepository.save(user);
-        auditService.record("TOTP_ENABLED", user.getId(), "users/" + user.getId(), "{}");
+        auditService.append("TOTP_ENABLED", user.getId(), "users/" + user.getId(), "{}");
     }
 
     /** Korak 2: verifikuje TOTP i izdaje sesiju; vraća vault materijal za klijentsko otključavanje. */
@@ -143,7 +143,7 @@ public class AuthService {
         }
 
         TokenService.IssuedTokens tokens = tokenService.issueForLogin(user);
-        auditService.record("LOGIN_SUCCESS", user.getId(), "users/" + user.getId(), "{}");
+        auditService.append("LOGIN_SUCCESS", user.getId(), "users/" + user.getId(), "{}");
 
         LoginStep2Response body = new LoginStep2Response(AuthUserResponse.from(user), VaultMaterial.from(user));
         return new LoginResult(tokens, body);
@@ -171,7 +171,7 @@ public class AuthService {
         user.setEncPrivateKey(decoder.decode(request.encPrivateKey()));
         userRepository.save(user);
 
-        auditService.record("MASTER_ROTATED", userId, "users/" + userId, "{}");
+        auditService.append("MASTER_ROTATED", userId, "users/" + userId, "{}");
     }
 
     /** Trenutni autentikovan korisnik (za {@code GET /auth/me}). */

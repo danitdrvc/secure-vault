@@ -13,7 +13,7 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - [x] Faza 8  — Admin i Sigurnosne Politike
 - [x] Faza 9  — API Gateway i Rate Limiting
 - [x] Faza 10 — Honeypot i Honeytokens
-- [ ] Faza 11 — Imutable Audit Log
+- [x] Faza 11 — Imutable Audit Log
 - [ ] Faza 12 — Integracija i Hardening (Dockerizacija preskočena)
 
 ---
@@ -640,3 +640,74 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 > kontrolisana `policy.honeypot_endpoint` flegom. U produkcijskom okruženju flag treba da bude `false`.
 > Pravi okidač (FROZEN + event) radi i kad endpoint nije aktivan — svaki direktan pristup honeytoken
 > tajni kroz regularni API (`GET/PUT/DELETE/share/rotate`) okida alarm.
+
+---
+
+## Faza 11 — Imutable Audit Log (hash lanac + anchoring)
+
+**Šta je urađeno:**
+- **Pravi linearni hash-lanac** (`audit/service/AuditService`) — stub iz ranijih faza zamenjen pravom
+  implementacijom. `append(action, actorId, resource, metadataJson)` učita vrh lanca (`prevHash`),
+  izračuna `hash = SHA-256(canonicalJSON(payload) || prevHash)` (`java.security.MessageDigest`) i upiše
+  zapis; prvi zapis koristi `prevHash = "GENESIS"`. Svih 13 ranijih stub poziva (`auditService.record`
+  u `User/Auth/Oidc/Vault/SecurityPolicy/Honeypot` servisima) preimenovano u `append` → sada idu kroz
+  pravi lanac.
+- **Determinizam heša (round-trip kroz bazu):**
+  - *Kanonski JSON:* `metadata` (jsonb) Postgres normalizuje (razmaci, redosled ključeva), pa se i pri
+    upisu i pri proveri svodi na kompaktan oblik sa **rekurzivno sortiranim ključevima** — isti
+    semantički sadržaj uvek daje isti heš.
+  - *Vreme:* `createdAt` se postavlja **eksplicitno** (UTC, skraćeno na mikrosekunde = preciznost
+    `timestamptz`-a) PRE računanja heša i u heš ulazi kao `Instant` (uvek UTC) — pa ni nano-preciznost ni
+    reprezentacija zone pri čitanju ne menjaju rezultat. (`@CreationTimestamp` uklonjen sa entiteta.)
+  - *`seq`:* NIJE deo heša (dodeljuje ga baza tek pri upisu); redosled čuva povezanost
+    `prevHash → hash`, a `seq` služi samo za prolaz kroz lanac.
+- **Serijalizacija upisa** — `append` uzima transakcionu savetodavnu bravu
+  (`pg_advisory_xact_lock`, `AuditLogRepository.acquireChainLock`) pre čitanja vrha; brava se drži do
+  COMMIT-a, pa dva konkurentna `append`-a ne mogu pročitati isti vrh i „račvati" lanac. Brava je u
+  istoj transakciji kao i poslovna akcija → atomičnost (audit se komituje zajedno sa akcijom) ostaje.
+- **`verify()` / `verifyChain()`** — prolaze ceo lanac (`findAllByOrderBySeqAsc`) i potvrđuju (1)
+  povezanost (`prevHash` == heš prethodnog) i (2) da svaki zapis ima ispravno **preračunat** heš.
+  `verify()` vraća `AuditVerificationResult {valid, verifiedCount, brokenAtSeq}` (prvi nekonzistentan
+  `seq`); `verifyChain()` je skraćeni `boolean`.
+- **Anchoring (`audit/service/AuditAnchorService`)** — `@Scheduled` posao (`app.audit.anchor-interval-ms`,
+  podrazumevano 1h; veliki `initialDelay` da ne okida tokom testova) periodično sidri vrh lanca:
+  `headHash` šalje na **nezavisni kanal** (email adminu ako je `spring.mail.host` konfigurisan, inače
+  uvek WARN log) i upisuje `audit_anchor` red (`from_seq..to_seq`, `head_hash`, `channel`,
+  `external_ref`). Idempotentno: bez novih zapisa od poslednjeg sidra ne upisuje red. `@EnableScheduling`
+  dodat na `SecureVaultApplication`.
+- **Admin uvid (`audit/web/AdminAuditController`, samo `ADMIN`)** — `GET /admin/audit/verify`
+  (vraća `AuditVerificationResponse`) i `POST /admin/audit/anchor` (ručno sidrenje, `201` +
+  `AuditAnchorResponse`; `404` ako nema novih zapisa). **Append-only:** namerno NEMA PUT/PATCH/DELETE
+  ruta nad `audit_log`.
+- **`GlobalExceptionHandler` poboljšan** — nepoznata ruta (`NoHandlerFoundException`/
+  `NoResourceFoundException`) sada vraća čist `404 NOT_FOUND` umesto da padne na catch-all `500`
+  (ujedno potvrđuje append-only: `DELETE/PUT /admin/audit/log/**` → `404`); dodato i mapiranje
+  `HttpRequestMethodNotSupportedException` → `405`.
+
+**Acceptance Criteria:**
+- [x] `verifyChain()` = `true` na netaknutom logu. *(`AuditChainTest.verifikacijaJeTacnaNaNetaknutomLancu`:
+  posle registracije+login-a `verifyChain()` = true; `GET /admin/audit/verify` → `valid:true`, bez
+  `brokenAtSeq`.)*
+- [x] Ručna izmena jednog `metadata` u DB → `verifyChain()` = `false` od tog `seq` nadalje.
+  *(`rucnaIzmenaMetadataObaraVerifikaciju`: direktan SQL `UPDATE audit_log SET metadata=...` (zaobilazi
+  API) → `verify().valid()` = false, `brokenAtSeq` = `seq` izmenjenog zapisa, `GET /admin/audit/verify`
+  → `valid:false`; restauracija originalne vrednosti vraća lanac u ispravno stanje.)*
+- [x] Anchoring job kreira `audit_anchor` red i šalje `headHash` na konfigurisani kanal.
+  *(`sidrenjeKreiraRedSaHeadHashom`: `POST /admin/audit/anchor` → `201`, `headHash`==vrh lanca,
+  `toSeq`==`seq` vrha, `channel`="log" (bez mail-a); red upisan u `audit_anchor`; ponovljeno sidrenje bez
+  novih zapisa → `404`. `@Scheduled scheduledAnchor()` poziva isti `anchorHead()`.)*
+- [x] Brisanje/izmena se ne mogu izvesti kroz API (append-only; nema UPDATE/DELETE ruta).
+  *(`auditLogJeAppendOnlyIVerifikacijaSamoZaAdmina`: `DELETE`/`PUT /admin/audit/log/{id}` → `404` (ruta ne
+  postoji); `GET /admin/audit/verify` developer → `403`, neautentikovan → `401`.)*
+
+**Verifikacija (lokalno, hand-installed JDK 21 + Maven 3.9.9 — bez Dockera):**
+- `mvn -f backend/pom.xml test` → **BUILD SUCCESS, 65 testova, 0 grešaka** (4 nova u `AuditChainTest`,
+  `@SpringBootTest` + MockMvc nad embedded PG16; `UserRegistrationTest` ažuriran — `prevHash` više nije
+  uvek `GENESIS` jer zapisi sada čine pravi povezani lanac).
+- `npm test` (`frontend/`) → bez promena (Faza 11 je čisto backend).
+
+> Napomena: hash-lanac otkriva tihu izmenu pojedinačnog zapisa; anchoring (slanje `headHash`-a van baze)
+> dodatno sprečava prepisivanje CELOG lanca (napadač sa pristupom bazi inače može preračunati sve
+> heševe). U dev/test okruženju anchoring se sidri u log kanal; produkciono se uključuje email preko
+> `MAIL_HOST` + `ADMIN_EMAIL`. Za živi `@Scheduled` posao podesi `AUDIT_ANCHOR_INTERVAL_MS`/
+> `AUDIT_ANCHOR_INITIAL_DELAY_MS`.
