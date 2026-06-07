@@ -28,7 +28,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  */
 @Configuration
 @EnableMethodSecurity
-@EnableConfigurationProperties({AuthProperties.class, OidcProperties.class})
+@EnableConfigurationProperties({AuthProperties.class, OidcProperties.class, InternalProperties.class})
 public class SecurityConfig {
 
     @Bean
@@ -43,6 +43,9 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/health", "/users/register").permitAll()
+                        // Interne (server-to-server) rute: nisu izložene kroz gateway, a štiti ih
+                        // deljeni X-Internal-Token koji proverava sam kontroler.
+                        .requestMatchers("/internal/**").permitAll()
                         .requestMatchers("/auth/login/**", "/auth/totp/**", "/auth/refresh").permitAll()
                         // OIDC redirect tok (start/callback) je javan — štite ga state/nonce + verifikacija id_token-a.
                         .requestMatchers("/auth/oidc/**").permitAll()

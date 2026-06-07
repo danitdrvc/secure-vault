@@ -50,6 +50,12 @@ app:
     # produkciji/dockeru se pali preko APP_COOKIE_SECURE=true.
     cookie-secure: ${APP_COOKIE_SECURE:false}
 
+  # Faza 9 — Interni (server-to-server) pozivi sa gateway-a (npr. prijava IP_BLOCKED događaja).
+  # Deljeni token koji backend zahteva u X-Internal-Token zaglavlju na /internal/** rutama.
+  # Dev default je nesiguran; u produkciji se postavlja preko INTERNAL_TOKEN.
+  internal:
+    token: ${INTERNAL_TOKEN:dev-only-insecure-internal-token-change-me}
+
   # Faza 5 — OIDC prijava. Podrazumevano isključeno (/auth/oidc/** vraća 404) dok se ne
   # konfiguriše eksterni provajder. OIDC daje SAMO sesiju — master lozinka je i dalje
   # obavezna za otključavanje vault-a (zero-knowledge očuvan).

@@ -11,7 +11,7 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - [x] Faza 6  — Vault CRUD
 - [x] Faza 7  — Sigurno Deljenje
 - [x] Faza 8  — Admin i Sigurnosne Politike
-- [ ] Faza 9  — API Gateway i Rate Limiting
+- [x] Faza 9  — API Gateway i Rate Limiting
 - [ ] Faza 10 — Honeypot i Honeytokens
 - [ ] Faza 11 — Imutable Audit Log
 - [ ] Faza 12 — Integracija i Hardening (Dockerizacija preskočena)
@@ -522,3 +522,61 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 > Napomena: rotacija tajne re-wrap-uje SVE primaoce, pa klijent pri rotaciji dohvati `GET
 > /vault/secrets/{id}/access` (vlasnik-only) i javne ključeve svih (`/users/{id}/public-key`).
 > Promena master lozinke ne dira tajne (USK je nepromenjen), pa nema potrebe za ponovnim loginom.
+
+---
+
+## Faza 9 — API Gateway i Rate Limiting
+
+**Šta je urađeno:**
+- **Sav saobraćaj kroz gateway** — frontend (`api/client.ts`) već gađa `${gateway}/api/**`; gateway
+  je jedina ulazna tačka. Rute u `gateway/application.yml`: `auth-login` (`/api/auth/login/**`,
+  striktan limit) PRE opšte `backend` (`/api/**`, blaži limit) — redosled bitan jer prvi predikat
+  koji se poklopi pobeđuje. Obe `StripPrefix=1` (skida `/api`).
+- **RedisRateLimiter (`RequestRateLimiter`)** — striktan na login (`RL_LOGIN_RATE`/`BURST`, default
+  5/10 tokena), blaži globalni (`RL_GLOBAL_RATE`/`BURST`, default 20/40). `KeyResolver` (`config/
+  RateLimitConfig.ipKeyResolver`) broji **po IP adresi** klijenta (`guard/ClientIp` — `X-Forwarded-For`
+  → `X-Real-IP` → `remoteAddress`), pa flooding sa jednog izvora ne pogađa druge. Prekoračenje → `429`.
+  Backing store: Redis (`spring.data.redis`, `REDIS_HOST`/`PORT`).
+- **`IpGuardFilter` (`GlobalFilter`, `HIGHEST_PRECEDENCE`)** — reputacija IP-a u Redisu (`guard/
+  RedisIpReputationService`): atomični `INCR` strike-brojača sa prozorskim TTL-om + blok-ključ preko
+  `SET NX` (tranzicija u blok se prepoznaje tačno jednom). Strike se podiže na: **neuspeo login**
+  (`401` na `/api/auth/login/**`, post-proxy provera statusa) i **sumnjiv unos** (SQLi/payload uzorak
+  u putanji/query-ju, `guard/SuspiciousPatternDetector` — URL-dekoduje pa regexom hvata `or 1=1`,
+  `union select`, SQL komentar/terminator, `sleep()`, path traversal, `<script>`). Po pragu
+  (`IPGUARD_MAX_STRIKES`, default 5) IP se privremeno blokira (`IPGUARD_BLOCK_TTL_SEC`, default 300s);
+  naredni zahtevi → `429`. Na tranziciji u blok prijavljuje se `IP_BLOCKED` događaj backendu.
+  - Sumnjiv zahtev se NE odbija odmah (samo broji) → honeypot okidač iz Faze 10 i dalje hvata prvi
+    pokušaj; upornog napadača blokira akumulacija strike-ova.
+  - Dekripcione greške se NE broje (klijentske su, zero-knowledge — gateway ih ne vidi); istekle
+    sesije (`401` van login-a) se NE broje da legitiman neaktivan korisnik ne bude blokiran.
+- **Prijava događaja backendu (server-to-server)** — `guard/BackendSecurityEventReporter` (WebClient)
+  POST-uje `POST /internal/security-events` sa deljenim `X-Internal-Token`. Backend
+  `honeypot/web/InternalSecurityEventController` (token-guarded, konstantno-vremensko poređenje →
+  `401` bez/sa pogrešnim tokenom) → `honeypot/service/SecurityEventService.record(...)` upiše red u
+  `security_event`. `/internal/**` NIJE izložen kroz gateway (`/api/**` ga ne pokriva), pa je
+  dostupan samo server-to-server; otpornost: ako backend padne, prijava se tiho odbacuje (blok i
+  `429` ne zavise od audita).
+
+**Acceptance Criteria:**
+- [x] N+1 uzastopnih neuspešnih login-a sa istog IP → `429` i red u `security_event`.
+  *(`IpGuardFilterTest.failedLoginsReachThresholdThenBlockWith429AndEvent`: N=3 → prvih 3 `401`,
+  tačno jedan `IP_BLOCKED` na tranziciji, (N+1)-vi → `429` bez poziva backenda; blok se prijavljuje
+  samo jednom. Backend `InternalSecurityEventTest.validTokenCreatesSecurityEventRow`: prijava sa
+  tačnim tokenom upiše red u `security_event`; bez/sa pogrešnim tokenom → `401`, bez reda.)*
+- [N/A] ~~Direktan pristup backend portu spolja nemoguć~~ — Docker mrežna izolacija se ne koristi;
+  backend je u dev-u dostupan na `localhost:8081`. Interni endpoint je ipak zaštićen deljenim tokenom.
+- [x] Legitiman saobraćaj nije pogođen ispod praga. *(`IpGuardFilterTest.legitimateTrafficBelowThreshold
+  Passes`: zahtev prolazi do backenda (`200`), bez bloka/događaja; `successfulLoginDoesNotStrike`:
+  10× uspešan login (`200`) ne podiže strike. `SuspiciousPatternDetectorTest.allowsLegitimateRequests`:
+  realne API putanje (login/secrets/public-key/policy) nisu sumnjive, dok SQLi/payload uzorci jesu.)*
+
+**Verifikacija (lokalno, hand-installed JDK 21 + Maven 3.9.9 — bez Dockera):**
+- `mvn -f backend/pom.xml test` → **55 testova, 0 grešaka** (4 nova u `InternalSecurityEventTest`).
+- `mvn -f gateway/pom.xml test` → **gateway testovi, 0 grešaka** (novi `IpGuardFilterTest` 4 +
+  `SuspiciousPatternDetectorTest` parametarski; postojeći `GatewayApplicationTests` 2). Hermetično:
+  filter testovi koriste in-memory fake reputacije/reportera (bez živog Redis-a/backenda).
+- `npm test` (`frontend/`) → **bez promena** (Faza 9 je gateway/backend; frontend već ide kroz gateway).
+
+> Napomena: za pravo pokretanje gateway-a (`mvn spring-boot:run`) potreban je živi Redis 7
+> (`REDIS_HOST`/`REDIS_PORT`) jer RedisRateLimiter i IpGuard brojači žive u Redisu. Testovi su
+> hermetični i ne zavise od toga.
