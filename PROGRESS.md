@@ -9,7 +9,7 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - [x] Faza 4  — Autentikacija (lozinka + MFA + sesije)
 - [x] Faza 5  — OIDC Prijava
 - [x] Faza 6  — Vault CRUD
-- [ ] Faza 7  — Sigurno Deljenje
+- [x] Faza 7  — Sigurno Deljenje
 - [ ] Faza 8  — Admin i Sigurnosne Politike
 - [ ] Faza 9  — API Gateway i Rate Limiting
 - [ ] Faza 10 — Honeypot i Honeytokens
@@ -372,3 +372,67 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 > Napomena: `encryptedBlob` gornja granica (64 KiB) pokriva i veće tajne (npr. sertifikate).
 > Rotacija samog `secretKey`-a (nov ključ + re-wrap ka svim primaocima) je tema Faze 8; ovde se
 > izmena radi istim ključem da deljenje iz Faze 7 ostane konzistentno.
+
+---
+
+## Faza 7 — Sigurno Deljenje (envelope)
+
+**Šta je urađeno:**
+- **Backend `GET /users/{id}/public-key`** (`UserController` → `UserService.getPublicKey`) —
+  vraća SPKI javni ključ korisnika (base64) + `userId`. Zahteva važeću sesiju (samo
+  `/users/register` je javno). Javni ključ je po prirodi javan; nijedan privatni materijal se
+  ne otkriva. Nepostojeći korisnik → `404 NOT_FOUND`. Novi DTO `PublicKeyResponse`.
+- **Backend `POST /vault/secrets/{id}/share`** (`VaultController.share` → `VaultService.share`) —
+  envelope re-wrap deljenje. Telo `{recipientId, wrappedSecretKey}` (`ShareSecretRequest`:
+  `recipientId` `@NotNull`, `wrappedSecretKey` `@Base64Bytes(256,256)` — RSA-OAEP-2048 šifrat).
+  Logika: tajna mora biti vidljiva (honeytoken/nepostojeća → `404`); onaj ko deli MORA imati
+  svoj `secret_access` red (inače `403` — bez pristupa nema `secretKey`); primalac mora postojati
+  (`404`); već podeljeno istom korisniku → `409 CONFLICT` (uz `unique(secret_id,user_id)`).
+  Kreira nov `secret_access` red (`wrapped_secret_key` = uvijen ka primaocu, `granted_by_id` =
+  onaj ko deli). **`encrypted_blob` se NE dira** (veliki blob se nikad ne re-šifruje). Audit stub
+  `SECRET_SHARED`. Vraća `ShareResponse` (samo metapodaci).
+- **Autorizacija po ulozi** — `@PreAuthorize("hasRole('TEAM_LEAD')")` na `share` endpointu;
+  `@EnableMethodSecurity` u `SecurityConfig`. `Developer` koji pokuša deljenje → `403` PRE ulaska
+  u servis. Authority `ROLE_TEAM_LEAD` postavlja `JwtCookieAuthenticationFilter` iz uloge u
+  access tokenu.
+- **`GlobalExceptionHandler`** — dodat `@ExceptionHandler(AccessDeniedException.class)` → `403`
+  `FORBIDDEN` u istom JSON obliku. (Method-security baca `AccessDeniedException` TOKOM poziva
+  kontrolera, pa je hvata advice; URL-bazirana odbijanja i dalje obrađuje
+  `RestAuthenticationEntryPoint` na nivou filtera — oba daju isti oblik.)
+- **Frontend `vault-crypto.ts`** — nova čista (bez mreže) fn `rewrapSecretForRecipient(
+  mojWrappedSecretKey, mojPrivateKey, recipientPublicKey)`: otvori `secretKey` svojim privatnim
+  ključem i ponovo ga uvije ka javnom ključu primaoca; `encryptedBlob` se ne dira. Plaintext
+  `secretKey` nikad ne napušta čitač.
+- **Frontend `features/vault/api.ts`** — `getUserPublicKey(userId)` (`/users/{id}/public-key`) i
+  `shareSecret(id, {recipientId, wrappedSecretKey})` + tipovi `PublicKeyResponse`/`ShareSecretRequest`/
+  `ShareResponse`.
+- **Frontend `vault-page.tsx`** — dugme „Podeli" (vidljivo SAMO ako je `session.user.role ===
+  'TEAM_LEAD'`) + forma za unos ID-a primaoca. Tok: `getSecret` (moj wrap) → `getUserPublicKey` →
+  `importPublicKey` → `rewrapSecretForRecipient` → `shareSecret`. Server forsira ulogu nezavisno
+  od UI-ja.
+
+**Acceptance Criteria:**
+- [x] Posle deljenja B dekriptuje istu tajnu; `encrypted_blob` je NEPROMENJEN. *(Frontend
+  `vault.test.ts` „posle deljenja PRIMALAC dešifruje istu tajnu; blob NEPROMENJEN": Alice uvije
+  ka Bobu, Bob dešifruje IDENTIČAN plaintext iz nepromenjenog bloba. Backend `SecretSharingTest
+  .teamLeadDeliTajnuPrimalacDobijaSvojWrappedKey`: bajt-za-bajt poređenje `encrypted_blob` pre/posle
+  share = isti; primalac kroz `GET` dobija SVOJ wrapped key i tajna se pojavljuje u njegovoj listi.)*
+- [x] `Developer` koji pokuša share → `403`. *(`SecretSharingTest.developerNeMozeDaDeli`: `403
+  FORBIDDEN`, pristupni red se NE kreira. Dodatno `teamLeadBezPristupaTajniNeMozeDaDeli`: Team Lead
+  bez pristupa tuđoj tajni → `403`.)*
+- [x] DB: `wrapped_secret_key` za A i B se razlikuju; nijedan nije plaintext. *(`SecretSharingTest`:
+  primaočev `wrapped_secret_key` == poslati bajtovi i `≠` vlasnikov; frontend „wrappedSecretKey za
+  Alice i Boba se razlikuju; nijedan nije plaintext (256B)" + „tuđi privatni ključ ne čita re-wrap".)*
+
+**Dodatni testovi:** `getPublicKeyVracaJavniKljuc` (SPKI iz DB), `getPublicKeyBezSesijeVraca401`,
+`deljenjeIstomKorisnikuDvaputVraca409`, `nepostojeciPrimalacVraca404`.
+
+**Verifikacija (lokalno, hand-installed JDK 21 + Maven 3.9.9 — bez Dockera):**
+- `mvn -f backend/pom.xml test` → **BUILD SUCCESS, 37 testova, 0 grešaka** (7 novih u
+  `SecretSharingTest`, `@SpringBootTest` + MockMvc nad embedded PG16).
+- `npm test` (`frontend/`) → **10 test fajlova, 30 testova, 0 grešaka** (3 nova u `vault.test.ts`).
+- `npm run build` (`tsc && vite build`) → čist type-check + build.
+
+> Napomena: deljenje ide po `recipientId` (UUID) — UI ima polje za ID primaoca. Lookup po
+> korisničkom imenu i opoziv pristupa (revoke) nisu deo Faze 7; admin upravljanje ulogama dolazi
+> u Fazi 8 (ovde se uloga `TEAM_LEAD` u testovima postavlja direktno u repozitorijumu).

@@ -4,6 +4,7 @@ import com.securevault.security.AuthenticatedUser;
 import com.securevault.vault.service.VaultService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -65,5 +66,19 @@ public class VaultController {
     public void delete(@AuthenticationPrincipal AuthenticatedUser principal,
                        @PathVariable UUID id) {
         vaultService.delete(principal.id(), id);
+    }
+
+    /**
+     * Deli tajnu sa primaocem (Faza 7). SAMO uloga {@code TEAM_LEAD} ({@code @PreAuthorize});
+     * {@code Developer} dobija {@code 403}. Server prima već uvijen {@code wrappedSecretKey} ka
+     * primaocu — {@code encryptedBlob} se ne dira (envelope deljenje, zero-knowledge očuvan).
+     */
+    @PostMapping("/{id}/share")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasRole('TEAM_LEAD')")
+    public ShareResponse share(@AuthenticationPrincipal AuthenticatedUser principal,
+                               @PathVariable UUID id,
+                               @Valid @RequestBody ShareSecretRequest request) {
+        return vaultService.share(principal.id(), id, request);
     }
 }

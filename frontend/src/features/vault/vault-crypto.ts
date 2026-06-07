@@ -82,3 +82,21 @@ export async function reencryptSecret(
   const encryptedBlob = await aesGcmEncrypt(secretKey, utf8(plaintext))
   return bytesToBase64(encryptedBlob)
 }
+
+/**
+ * Deljenje (Faza 7) — envelope re-wrap. Onaj ko deli svojim privatnim ključem otvori
+ * `secretKey` iz SVOG `wrappedSecretKey`, pa isti `secretKey` uvije ka javnom ključu
+ * PRIMAOCA. Vraća novi `wrappedSecretKey` (base64) koji otvara samo primaočev privatni ključ.
+ *
+ * `encryptedBlob` se NIKAD ne dira — veliki blob ostaje nepromenjen; deli se samo mali
+ * uvijeni ključ. Server vidi isključivo šifrat (plaintext `secretKey` ne napušta čitač).
+ */
+export async function rewrapSecretForRecipient(
+  myWrappedSecretKey: string,
+  myPrivateKey: CryptoKey,
+  recipientPublicKey: CryptoKey,
+): Promise<string> {
+  const secretKeyRaw = await unwrap(myPrivateKey, base64ToBytes(myWrappedSecretKey))
+  const wrappedForRecipient = await wrapTo(recipientPublicKey, secretKeyRaw)
+  return bytesToBase64(wrappedForRecipient)
+}

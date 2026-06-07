@@ -3,6 +3,7 @@ package com.securevault.common.error;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -47,6 +48,19 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ErrorResponse.of("BAD_REQUEST", "Neispravan parametar putanje."));
+    }
+
+    /**
+     * Odbijanje na nivou metode ({@code @PreAuthorize}) — npr. {@code Developer} pokuša deljenje
+     * koje sme samo {@code TEAM_LEAD}. Method security baca {@link AccessDeniedException} TOKOM
+     * poziva kontrolera (unutar DispatcherServlet-a), pa je hvata ovaj advice (URL-bazirana
+     * odbijanja i dalje obrađuje {@code RestAuthenticationEntryPoint} na nivou filtera). Isti
+     * oblik {@code FORBIDDEN} odgovora u oba slučaja.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ErrorResponse.of("FORBIDDEN", "Nedovoljna prava za ovu akciju."));
     }
 
     @ExceptionHandler(Exception.class)

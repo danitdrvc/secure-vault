@@ -2,15 +2,24 @@ import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import axios from 'axios'
 import { useSession } from '../../context/session-context'
+import { importPublicKey } from '../../crypto'
+import { base64ToBytes } from '../../api/codec'
 import {
   createSecret,
   deleteSecret,
   getSecret,
+  getUserPublicKey,
   listSecrets,
+  shareSecret,
   updateSecret,
 } from './api'
 import type { SecretSummary } from './api'
-import { decryptSecret, encryptNewSecret, reencryptSecret } from './vault-crypto'
+import {
+  decryptSecret,
+  encryptNewSecret,
+  reencryptSecret,
+  rewrapSecretForRecipient,
+} from './vault-crypto'
 
 type Status = 'idle' | 'busy' | 'error'
 
@@ -52,7 +61,12 @@ export default function VaultPage() {
   const [open, setOpen] = useState<OpenSecret | null>(null)
   const [editName, setEditName] = useState('')
 
+  const [shareId, setShareId] = useState<string | null>(null)
+  const [recipientId, setRecipientId] = useState('')
+
   const vault = session.vault
+  // Deljenje sme samo TEAM_LEAD (server to forsira @PreAuthorize-om; UI sakriva akciju ostalima).
+  const canShare = session.user?.role === 'TEAM_LEAD'
 
   const refresh = useCallback(async () => {
     setStatus('busy')
@@ -151,6 +165,32 @@ export default function VaultPage() {
     }
   }
 
+  async function onShare(event: FormEvent, id: string) {
+    event.preventDefault()
+    setStatus('busy')
+    setMessage('')
+    try {
+      // 1) Dohvati MOJ uvijeni secretKey za ovu tajnu. 2) Dohvati javni ključ primaoca.
+      // 3) Otvori secretKey svojim privatnim ključem i ponovo ga uvij ka primaocu (envelope).
+      const detail = await getSecret(id)
+      const recipient = await getUserPublicKey(recipientId.trim())
+      const recipientPublicKey = await importPublicKey(base64ToBytes(recipient.publicKey))
+      const wrappedSecretKey = await rewrapSecretForRecipient(
+        detail.wrappedSecretKey,
+        vault!.privateKey,
+        recipientPublicKey,
+      )
+      await shareSecret(id, { recipientId: recipient.userId, wrappedSecretKey })
+      setShareId(null)
+      setRecipientId('')
+      setMessage('Tajna je podeljena (secretKey uvijen ka primaocu; blob netaknut).')
+      setStatus('idle')
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }
+
   const busy = status === 'busy'
 
   return (
@@ -194,11 +234,45 @@ export default function VaultPage() {
                   <button type="button" onClick={() => onReveal(secret.id)} disabled={busy}>
                     Prikaži
                   </button>
+                  {canShare && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShareId(shareId === secret.id ? null : secret.id)
+                        setRecipientId('')
+                      }}
+                      disabled={busy}
+                    >
+                      Podeli
+                    </button>
+                  )}
                   <button type="button" onClick={() => onDelete(secret.id)} disabled={busy}>
                     Obriši
                   </button>
                 </span>
               </div>
+
+              {canShare && shareId === secret.id && (
+                <form onSubmit={(e) => onShare(e, secret.id)} style={{ marginTop: 12 }}>
+                  <label style={fieldStyle}>
+                    ID primaoca (korisnika)
+                    <input
+                      value={recipientId}
+                      onChange={(e) => setRecipientId(e.target.value)}
+                      placeholder="UUID korisnika"
+                      required
+                    />
+                  </label>
+                  <span style={{ display: 'flex', gap: 8 }}>
+                    <button type="submit" disabled={busy}>
+                      Podeli tajnu
+                    </button>
+                    <button type="button" onClick={() => setShareId(null)} disabled={busy}>
+                      Otkaži
+                    </button>
+                  </span>
+                </form>
+              )}
 
               {open?.id === secret.id && (
                 <form onSubmit={onSaveEdit} style={{ marginTop: 12 }}>
