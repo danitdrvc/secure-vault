@@ -2,6 +2,7 @@ import { Link, Route, Routes } from 'react-router-dom'
 import HealthStatus from './components/health-status'
 import RegisterForm from './features/auth/register-form'
 import LoginForm from './features/auth/login-form'
+import VaultPage from './features/vault/vault-page'
 
 export default function App() {
   return (
@@ -11,11 +12,13 @@ export default function App() {
         <Link to="/">Početna</Link>
         <Link to="/register">Registracija</Link>
         <Link to="/login">Prijava</Link>
+        <Link to="/vault">Vault</Link>
       </nav>
       <Routes>
         <Route path="/" element={<HealthStatus />} />
         <Route path="/register" element={<RegisterForm />} />
         <Route path="/login" element={<LoginForm />} />
+        <Route path="/vault" element={<VaultPage />} />
       </Routes>
     </main>
   )

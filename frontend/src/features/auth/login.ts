@@ -6,8 +6,8 @@
  * Master lozinka i izvedeni ključevi (KEK/USK/privateKey plaintext) NIKAD ne izlaze odavde
  * ka mreži — `authKey` je jedino što ide serveru, i to kao dokaz identiteta (server čuva bcrypt).
  */
-import { deriveLoginAuthKey, unlock } from '../../crypto'
-import type { UnlockedVault } from '../../crypto'
+import { deriveLoginAuthKey, importPublicKey, unlock } from '../../crypto'
+import type { VaultKeys } from '../../crypto'
 import { base64ToBytes, bytesToBase64 } from '../../api/codec'
 import type { LoginParamsResponse, VaultMaterial } from './api'
 
@@ -26,12 +26,15 @@ export async function computeAuthKey(
 export async function unlockVault(
   password: string,
   vault: VaultMaterial,
-): Promise<UnlockedVault> {
-  return unlock(
+): Promise<VaultKeys> {
+  const unlocked = await unlock(
     password,
     base64ToBytes(vault.kdfSalt),
     vault.kdfIterations,
     base64ToBytes(vault.encUsk),
     base64ToBytes(vault.encPrivateKey),
   )
+  // Sopstveni javni ključ (SPKI iz materijala) → potreban da klijent uvije secretKey ka sebi.
+  const publicKey = await importPublicKey(base64ToBytes(vault.publicKey))
+  return { ...unlocked, publicKey }
 }

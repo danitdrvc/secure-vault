@@ -8,16 +8,16 @@
  */
 import { createContext, useContext, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { UnlockedVault } from '../crypto'
+import type { VaultKeys } from '../crypto'
 import type { AuthUser } from '../features/auth/api'
 
 interface SessionContextValue {
   user: AuthUser | null
-  /** Otključani ključevi (samo u memoriji); `null` dok vault nije otključan. */
-  vault: UnlockedVault | null
+  /** Otključani ključevi (usk + privatni + javni; samo u memoriji); `null` dok vault nije otključan. */
+  vault: VaultKeys | null
   isUnlocked: boolean
   /** Postavlja sesiju posle uspešnog logina + otključavanja. */
-  setSession: (user: AuthUser, vault: UnlockedVault) => void
+  setSession: (user: AuthUser, vault: VaultKeys) => void
   /** Briše ključeve i korisnika iz memorije (odjava / zaključavanje). */
   clear: () => void
 }
@@ -26,7 +26,7 @@ const SessionContext = createContext<SessionContextValue | null>(null)
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
-  const [vault, setVault] = useState<UnlockedVault | null>(null)
+  const [vault, setVault] = useState<VaultKeys | null>(null)
 
   const value = useMemo<SessionContextValue>(
     () => ({

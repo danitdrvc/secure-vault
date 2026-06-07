@@ -49,11 +49,20 @@ export interface UnlockedVault {
   privateKey: CryptoKey
 }
 
+/**
+ * Pun set ključeva u memoriji sesije: otključani vault + sopstveni javni ključ (usage `encrypt`).
+ * Javni ključ je potreban da klijent uvije `secretKey` ka SEBI pri kreiranju tajne (Faza 6),
+ * bez ponovnog dohvata sa servera.
+ */
+export interface VaultKeys extends UnlockedVault {
+  publicKey: CryptoKey
+}
+
 export interface BootstrapResult {
   /** Za slanje serveru. */
   artifacts: RegistrationArtifacts
   /** Za držanje u memoriji (posle registracije korisnik je već otključan). */
-  vault: UnlockedVault & { publicKey: CryptoKey }
+  vault: VaultKeys
 }
 
 /**

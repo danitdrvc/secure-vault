@@ -21,6 +21,7 @@ export { bootstrapKeys, unlock, deriveLoginAuthKey } from './vault'
 export type {
   RegistrationArtifacts,
   UnlockedVault,
+  VaultKeys,
   BootstrapResult,
 } from './vault'
 export type { Bytes } from './bytes'
