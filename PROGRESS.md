@@ -14,7 +14,7 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - [x] Faza 9  — API Gateway i Rate Limiting
 - [x] Faza 10 — Honeypot i Honeytokens
 - [x] Faza 11 — Imutable Audit Log
-- [ ] Faza 12 — Integracija i Hardening (Dockerizacija preskočena)
+- [x] Faza 12 — Integracija i Hardening (Dockerizacija preskočena)
 
 ---
 
@@ -711,3 +711,76 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 > heševe). U dev/test okruženju anchoring se sidri u log kanal; produkciono se uključuje email preko
 > `MAIL_HOST` + `ADMIN_EMAIL`. Za živi `@Scheduled` posao podesi `AUDIT_ANCHOR_INTERVAL_MS`/
 > `AUDIT_ANCHOR_INITIAL_DELAY_MS`.
+
+---
+
+## Faza 12 — Integracija i Hardening
+
+> Dockerizacija je PRESKOČENA (permanentna odluka — Docker se ne koristi). Ova faza pokriva
+> preostale hardening zadatke: sigurnosna zaglavlja, striktan CORS, validaciju konfiguracije na
+> startu, README + demo skriptu, i finalnu integracionu verifikaciju svih test-suite-ova.
+
+**Šta je urađeno:**
+- **Sigurnosna HTTP zaglavlja** (`config/SecurityConfig` `.headers(...)`) — svaki backend odgovor
+  (i uspešan i `401`/`403` iz `RestAuthenticationEntryPoint`) nosi: `Content-Security-Policy:
+  default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'` (backend je API,
+  vraća JSON ne HTML → ništa se ne sme učitati/ugraditi), `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`
+  (onemogućeni geolocation/microphone/camera/payment/usb), i `Strict-Transport-Security`
+  (emituje se samo preko HTTPS-a). Gateway prosleđuje ova zaglavlja browseru na `/api/**`
+  (proxy ne dira ne-hop-by-hop zaglavlja).
+- **Striktan CORS na gateway-u** (`gateway/application.yml` `globalcors`) — sa wildcard-a na
+  eksplicitno: SAMO `FRONTEND_ORIGIN`, metode `GET/POST/PUT/PATCH/DELETE/OPTIONS`, zaglavlja
+  `Content-Type`/`X-Requested-With`, `allowCredentials: true` (sesijski kolačići; origin zato NE
+  sme biti `*`), `maxAge: 3600`. Backend i dalje ima CORS isključen (jedina ulazna tačka je gateway).
+- **Validacija konfiguracije na startu (fail-fast)** — `StartupConfigValidator` u backendu i
+  gateway-u (`InitializingBean`):
+  - *Tvrde provere (uvek greška):* `JWT_SECRET` postoji i ima ≥ 32 bajta (HS256 zahtev `jjwt`-a);
+    `SERVER_KMS_KEY`, `INTERNAL_TOKEN` (i `BACKEND_URI` na gateway-u) nisu prazni.
+  - *Nesigurne dev podrazumevane vrednosti* (markeri `dev-only-insecure`/`change-me`, DB lozinka
+    `vault`, `APP_COOKIE_SECURE=false`): u dev-u **UPOZORENJE** (`WARN [config] ...` — lokalno
+    pokretanje radi bez podešavanja), a u **`prod` profilu GREŠKA** → app/gateway odbija da se
+    podigne sa jasnom porukom. Logika je u statičkom `validate(...)` radi testiranja bez konteksta.
+- **`README.md`** (root) — pregled arhitekture (servisi/portovi/uloge), preduslovi, inicijalno
+  podešavanje baze (rola/baza/`pgcrypto`), pokretanje 3 servisa lokalno, komande za testove, demo,
+  tabela sigurnosnih mehanizama i **produkcioni hardening checklist** (`prod` profil + env tajne).
+- **`demo.ps1`** (root, PowerShell 5.1, ASCII radi pouzdanog parsiranja) — server-side demo
+  sigurnosne posture žive instalacije BEZ klijentske kripto: (1) health lanac gateway+proxy,
+  (2) sigurnosna zaglavlja na `/api/health`, (3) striktan CORS (dozvoljen frontend origin, odbijen
+  stran), (4) privatni endpointi bez sesije → `401`, (5) brzi niz login zahteva → `429`. End-to-end
+  FUNKCIONALNI tok (registracija→share→honeypot→audit) je browser-zasnovan (zero-knowledge) i dat
+  je korak-po-korak u `TESTIRANJE.md`.
+- **`TESTIRANJE.md`** (root) — detaljno uputstvo za ručno testiranje svih bitnih funkcionalnosti u
+  browseru (+ konzola / pgAdmin gde je nužno): registracija, MFA login, vault CRUD, deljenje, admin
+  politike, rotacija lozinke/tajne, honeypot/SQLi, audit verifikacija, rate-limit, sigurnosna
+  zaglavlja, zero-knowledge dokazi.
+
+**Acceptance Criteria:**
+- [x] Demo skripta prolazi end-to-end sa lokalnim servisima. *(Server-side posturu pokriva
+  `demo.ps1` — health/zaglavlja/CORS/auth-gate/rate-limit; pun funkcionalni E2E tok je browser-
+  zasnovan zbog zero-knowledge kripto i opisan je u `TESTIRANJE.md`. Skripta je sintaksno verifikovana
+  PowerShell parserom.)*
+- [x] Svi unit/integration testovi prolaze: `mvn test` (backend, gateway) i `npm test` (frontend).
+  *(Backend **72** testa, gateway **25**, frontend **42** — svi 0 grešaka; `npm run build` čist.)*
+- [x] Sigurnosni headeri prisutni. *(`config/SecurityHeadersTest`: i `200` (`/health`) i `401`
+  (`/auth/me` bez sesije) nose `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`,
+  CSP `default-src 'none'`, `Permissions-Policy`.)*
+- [x] Validacija konfiguracije na startu. *(`config/StartupConfigValidatorTest` (5) + gateway
+  `StartupConfigValidatorTest` (4): dev default-i = upozorenja; `prod` + nesigurne vrednosti = greške;
+  prekratak/prazan `JWT_SECRET` i prazne tajne = greške; jake vrednosti u `prod` prolaze čisto.)*
+- [N/A] ~~`docker compose up --build`~~ / ~~backend nedostupan spolja (Docker mreža)~~ — Docker se ne
+  koristi; u dev-u je backend na `localhost:8081`. Interni endpoint je ipak token-zaštićen, a produkciona
+  izolacija backenda je u README checklist-i (firewall / mrežna konfiguracija).
+
+**Verifikacija (lokalno, hand-installed JDK 21 + Maven 3.9.9 — bez Dockera):**
+- `mvn -f backend/pom.xml test` → **BUILD SUCCESS, 72 testa, 0 grešaka** (7 novih: `SecurityHeadersTest` 2,
+  `StartupConfigValidatorTest` 5; svi prethodni nepromenjeni — `StartupConfigValidator` u dev-u samo
+  loguje upozorenja, ne obara `@SpringBootTest` kontekste).
+- `mvn -f gateway/pom.xml test` → **BUILD SUCCESS, 25 testova, 0 grešaka** (4 nova u gateway
+  `StartupConfigValidatorTest`).
+- `npm test` (`frontend/`) → **12 test fajlova, 42 testa, 0 grešaka** (Faza 12 ne dira frontend);
+  `npm run build` → čist type-check + build.
+
+> Napomena: produkcioni „backend nedostupan spolja" se ne forsira kodom (dev je na `localhost`); to je
+> deo deployment-a (firewall / mrežna izolacija) i navedeno je u README checklist-i. `prod` profil
+> (`SPRING_PROFILES_ACTIVE=prod`) pretvara sva hardening upozorenja u tvrde greške na startu.
