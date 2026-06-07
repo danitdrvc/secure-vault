@@ -12,11 +12,13 @@ import com.securevault.user.web.AdminUserResponse;
 import com.securevault.user.web.PublicKeyResponse;
 import com.securevault.user.web.RegisterRequest;
 import com.securevault.user.web.RegisterResponse;
+import com.securevault.user.web.UserDirectoryEntry;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Base64;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -78,6 +80,29 @@ public class UserService {
                 saved.getEmail(),
                 saved.getRole(),
                 saved.getStatus());
+    }
+
+    /**
+     * Imenik korisnika za deljenje (Faza 7). Onaj ko deli tajnu bira primaoca iz liste umesto
+     * ručnog unosa UUID-a. Vraća samo neosetljive metapodatke (id, username, role) — nikad
+     * email, status ni kripto materijal.
+     */
+    @Transactional(readOnly = true)
+    public List<UserDirectoryEntry> listDirectory() {
+        return userRepository.findAllByOrderByUsernameAsc().stream()
+                .map(UserDirectoryEntry::from)
+                .toList();
+    }
+
+    /**
+     * Pun pregled svih naloga za admina (Faza 8). Admin tako vidi sve naloge i njihov status
+     * umesto da ručno pamti/unosi UUID. Vraća samo neosetljive metapodatke (bez kripto materijala).
+     */
+    @Transactional(readOnly = true)
+    public List<AdminUserResponse> listAllUsers() {
+        return userRepository.findAllByOrderByUsernameAsc().stream()
+                .map(AdminUserResponse::from)
+                .toList();
     }
 
     /**

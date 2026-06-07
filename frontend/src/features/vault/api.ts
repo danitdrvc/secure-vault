@@ -117,6 +117,19 @@ export interface ShareResponse {
   createdAt: string
 }
 
+/** Stavka imenika korisnika — za izbor primaoca iz liste umesto ručnog unosa UUID-a. */
+export interface UserDirectoryEntry {
+  id: string
+  username: string
+  role: string
+}
+
+/** Imenik korisnika (`GET /users`) — popunjava padajuću listu primaoca pri deljenju. */
+export async function listUsers(): Promise<UserDirectoryEntry[]> {
+  const res = await apiClient.get<UserDirectoryEntry[]>('/users')
+  return res.data
+}
+
 /** Dohvata javni ključ primaoca (`/users/{id}/public-key`). */
 export async function getUserPublicKey(userId: string): Promise<PublicKeyResponse> {
   const res = await apiClient.get<PublicKeyResponse>(`/users/${userId}/public-key`)

@@ -112,6 +112,7 @@ export default function ChangeMasterForm() {
             autoComplete="current-password"
             required
           />
+          <span style={counterStyle}>{currentPassword.length} karaktera</span>
         </label>
         {currentTooShort && (
           <p data-testid="too-short" style={{ color: '#b00020', fontSize: 13 }}>
@@ -128,6 +129,10 @@ export default function ChangeMasterForm() {
             minLength={minLength ?? undefined}
             required
           />
+          <span style={counterStyle}>
+            {newPassword.length}
+            {minLength != null ? ` / min ${minLength}` : ''} karaktera
+          </span>
         </label>
         <label style={fieldStyle}>
           Potvrda nove lozinke
@@ -138,6 +143,7 @@ export default function ChangeMasterForm() {
             autoComplete="new-password"
             required
           />
+          <span style={counterStyle}>{confirm.length} karaktera</span>
         </label>
         <button type="submit" disabled={status === 'busy'}>
           {status === 'busy' ? 'Menjanje...' : 'Promeni lozinku'}
@@ -161,4 +167,10 @@ const fieldStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: 4,
   marginBottom: 12,
+}
+
+const counterStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#666',
+  alignSelf: 'flex-end',
 }

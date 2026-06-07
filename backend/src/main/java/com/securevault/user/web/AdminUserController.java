@@ -5,12 +5,14 @@ import com.securevault.user.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -30,6 +32,15 @@ public class AdminUserController {
 
     public AdminUserController(UserService userService) {
         this.userService = userService;
+    }
+
+    /**
+     * Pun pregled svih naloga. Admin tako vidi sve naloge i njihov status i bira cilj iz liste
+     * umesto ručnog unosa UUID-a. Vraća samo neosetljive metapodatke (bez kripto materijala).
+     */
+    @GetMapping
+    public List<AdminUserResponse> list() {
+        return userService.listAllUsers();
     }
 
     /**

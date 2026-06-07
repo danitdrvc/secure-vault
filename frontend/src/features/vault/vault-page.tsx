@@ -11,11 +11,12 @@ import {
   getSecretAccess,
   getUserPublicKey,
   listSecrets,
+  listUsers,
   rotateSecretApi,
   shareSecret,
   updateSecret,
 } from './api'
-import type { SecretSummary } from './api'
+import type { SecretSummary, UserDirectoryEntry } from './api'
 import {
   decryptSecret,
   encryptNewSecret,
@@ -71,6 +72,7 @@ export default function VaultPage() {
 
   const [shareId, setShareId] = useState<string | null>(null)
   const [recipientId, setRecipientId] = useState('')
+  const [users, setUsers] = useState<UserDirectoryEntry[]>([])
 
   const vault = session.vault
   // Deljenje sme samo TEAM_LEAD (server to forsira @PreAuthorize-om; UI sakriva akciju ostalima).
@@ -92,6 +94,15 @@ export default function VaultPage() {
       void refresh()
     }
   }, [vault, refresh])
+
+  // Imenik korisnika za padajuću listu primaoca (samo za TEAM_LEAD-a koji deli tajne).
+  useEffect(() => {
+    if (vault && canShare) {
+      listUsers()
+        .then(setUsers)
+        .catch(() => setUsers([]))
+    }
+  }, [vault, canShare])
 
   if (!vault || !session.user) {
     return (
@@ -307,13 +318,23 @@ export default function VaultPage() {
               {canShare && shareId === secret.id && (
                 <form onSubmit={(e) => onShare(e, secret.id)} style={{ marginTop: 12 }}>
                   <label style={fieldStyle}>
-                    ID primaoca (korisnika)
-                    <input
+                    Primalac (korisnik)
+                    <select
                       value={recipientId}
                       onChange={(e) => setRecipientId(e.target.value)}
-                      placeholder="UUID korisnika"
                       required
-                    />
+                    >
+                      <option value="" disabled>
+                        — izaberite korisnika —
+                      </option>
+                      {users
+                        .filter((u) => u.id !== session.user?.id)
+                        .map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.username} ({u.role})
+                          </option>
+                        ))}
+                    </select>
                   </label>
                   <span style={{ display: 'flex', gap: 8 }}>
                     <button type="submit" disabled={busy}>

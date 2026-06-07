@@ -16,6 +16,12 @@ export interface AdminUser {
   status: string
 }
 
+/** Pun pregled svih naloga (`GET /admin/users`) — admin vidi sve naloge i bira cilj iz liste. */
+export async function listUsers(): Promise<AdminUser[]> {
+  const res = await apiClient.get<AdminUser[]>('/admin/users')
+  return res.data
+}
+
 /** Aktivira/deaktivira nalog (`PATCH /admin/users/{id}/status`). */
 export async function updateUserStatus(
   id: string,

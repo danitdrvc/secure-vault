@@ -4,10 +4,11 @@ import axios from 'axios'
 import { useSession } from '../../context/session-context'
 import {
   fetchAdminPolicy,
+  listUsers,
   updatePolicy,
   updateUserStatus,
 } from './api'
-import type { AdminPolicy, AdminUserStatus, UpdatePolicyRequest } from './api'
+import type { AdminPolicy, AdminUser, AdminUserStatus, UpdatePolicyRequest } from './api'
 
 type Status = 'idle' | 'busy' | 'error'
 
@@ -38,6 +39,7 @@ export default function AdminPage() {
   const [message, setMessage] = useState('')
 
   const [targetUserId, setTargetUserId] = useState('')
+  const [users, setUsers] = useState<AdminUser[]>([])
 
   const [policy, setPolicy] = useState<AdminPolicy | null>(null)
   const [form, setForm] = useState<UpdatePolicyRequest>({})
@@ -62,11 +64,21 @@ export default function AdminPage() {
     }
   }, [])
 
+  const loadUsers = useCallback(async () => {
+    try {
+      setUsers(await listUsers())
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }, [])
+
   useEffect(() => {
     if (isAdmin) {
       void loadPolicy()
+      void loadUsers()
     }
-  }, [isAdmin, loadPolicy])
+  }, [isAdmin, loadPolicy, loadUsers])
 
   if (!session.user || !isAdmin) {
     return (
@@ -84,6 +96,7 @@ export default function AdminPage() {
       const updated = await updateUserStatus(targetUserId.trim(), nextStatus)
       setMessage(`Nalog "${updated.username}" je sada ${updated.status}.`)
       setStatus('idle')
+      await loadUsers()
     } catch (err) {
       setStatus('error')
       setMessage(extractError(err))
@@ -134,12 +147,17 @@ export default function AdminPage() {
       <div style={cardStyle}>
         <h3 style={{ marginTop: 0 }}>Status naloga</h3>
         <label style={fieldStyle}>
-          ID korisnika (UUID)
-          <input
-            value={targetUserId}
-            onChange={(e) => setTargetUserId(e.target.value)}
-            placeholder="UUID korisnika"
-          />
+          Nalog
+          <select value={targetUserId} onChange={(e) => setTargetUserId(e.target.value)}>
+            <option value="" disabled>
+              — izaberite nalog —
+            </option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.username} — {u.role} — {u.status}
+              </option>
+            ))}
+          </select>
         </label>
         <span style={{ display: 'flex', gap: 8 }}>
           <button type="button" onClick={() => onStatus('ACTIVE')} disabled={busy || !targetUserId.trim()}>
@@ -175,7 +193,7 @@ export default function AdminPage() {
             checked={form.honeypotEndpoint ?? false}
             onChange={(e) => setForm({ ...form, honeypotEndpoint: e.target.checked })}
           />
-          Honeypot test-endpoint uključen (demonstracija SQLi — Faza 10)
+          Honeypot test-endpoint uključen
         </label>
         <button type="submit" disabled={busy}>
           {busy ? 'Čuvanje...' : 'Sačuvaj politiku'}

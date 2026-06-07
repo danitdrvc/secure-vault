@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -30,6 +31,16 @@ public class UserController {
     @ResponseStatus(HttpStatus.CREATED)
     public RegisterResponse register(@Valid @RequestBody RegisterRequest request) {
         return userService.register(request);
+    }
+
+    /**
+     * Imenik korisnika (Faza 7 — deljenje). Zahteva važeću sesiju; vraća samo neosetljive
+     * metapodatke (id, username, role) da bi onaj ko deli tajnu izabrao primaoca iz liste
+     * umesto ručnog unosa UUID-a.
+     */
+    @GetMapping
+    public List<UserDirectoryEntry> directory() {
+        return userService.listDirectory();
     }
 
     /**

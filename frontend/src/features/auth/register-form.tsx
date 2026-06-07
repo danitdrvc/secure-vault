@@ -99,6 +99,9 @@ export default function RegisterForm() {
             autoComplete="new-password"
             required
           />
+          <span style={counterStyle}>
+            {password.length} / min {MIN_PASSWORD_LENGTH} karaktera
+          </span>
         </label>
         <label style={fieldStyle}>
           Potvrda lozinke
@@ -109,6 +112,7 @@ export default function RegisterForm() {
             autoComplete="new-password"
             required
           />
+          <span style={counterStyle}>{confirm.length} karaktera</span>
         </label>
         <button type="submit" disabled={busy}>
           {busy ? 'Kreiranje...' : 'Registruj se'}
@@ -131,4 +135,10 @@ const fieldStyle: React.CSSProperties = {
   flexDirection: 'column',
   gap: 4,
   marginBottom: 12,
+}
+
+const counterStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#666',
+  alignSelf: 'flex-end',
 }
