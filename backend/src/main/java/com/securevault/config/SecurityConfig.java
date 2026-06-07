@@ -6,6 +6,7 @@ import com.securevault.security.RestAuthenticationEntryPoint;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -14,6 +15,8 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
 
 /**
  * Spring Security konfiguracija (Faza 4).
@@ -25,6 +28,12 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  *
  * <p>Javne rute (bez tokena): registracija i ceo login tok (params/step1/totp/step2/refresh) —
  * njih štiti bcrypt + TOTP + MFA tiket na nivou servisa. Sve ostalo zahteva važeći access token.
+ *
+ * <p><b>Faza 12 — hardening:</b> svaki odgovor nosi sigurnosne HTTP zaglavlja
+ * ({@code Content-Security-Policy}, {@code X-Frame-Options}, {@code X-Content-Type-Options},
+ * {@code Referrer-Policy}, {@code Permissions-Policy}, {@code Strict-Transport-Security}).
+ * Backend je API (vraća JSON, ne HTML), pa je CSP maksimalno restriktivan
+ * ({@code default-src 'none'}). Ova zaglavlja gateway prosleđuje browseru na {@code /api/**}.
  */
 @Configuration
 @EnableMethodSecurity
@@ -40,6 +49,25 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 // CORS rešava gateway (jedina ulazna tačka); backend nije izložen spolja.
                 .cors(AbstractHttpConfigurer::disable)
+                // Faza 12 — sigurnosna zaglavlja na svakom odgovoru (uklj. 401/403 iz entry point-a).
+                .headers(headers -> headers
+                        // X-Content-Type-Options: nosniff — bez MIME sniffing-a.
+                        .contentTypeOptions(Customizer.withDefaults())
+                        // X-Frame-Options: DENY — bez učitavanja u frame (clickjacking zaštita).
+                        .frameOptions(frame -> frame.deny())
+                        // Referrer-Policy: no-referrer — ne curi URL u Referer zaglavlju.
+                        .referrerPolicy(referrer -> referrer
+                                .policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                        // CSP: API vraća JSON, ne HTML → ništa se ne sme učitati ni ugraditi.
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(
+                                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"))
+                        // HSTS — primenjuje se samo preko HTTPS-a (u dev-u nad http se ne emituje).
+                        .httpStrictTransportSecurity(hsts -> hsts
+                                .includeSubDomains(true)
+                                .maxAgeInSeconds(31536000))
+                        // Permissions-Policy — onemogući moćne browser API-je za ovaj origin.
+                        .addHeaderWriter(new StaticHeadersWriter("Permissions-Policy",
+                                "geolocation=(), microphone=(), camera=(), payment=(), usb=()")))
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/health", "/users/register").permitAll()

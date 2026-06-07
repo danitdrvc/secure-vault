@@ -42,13 +42,24 @@ spring:
                 redis-rate-limiter.replenishRate: ${RL_GLOBAL_RATE:20}
                 redis-rate-limiter.burstCapacity: ${RL_GLOBAL_BURST:40}
                 redis-rate-limiter.requestedTokens: 1
+      # Faza 12 — striktan CORS: SAMO frontend origin, eksplicitne metode/zaglavlja (ne "*"),
+      # uz allowCredentials (sesijski kolačići). Sa kredencijalima origin NE sme biti "*".
       globalcors:
         cors-configurations:
           '[/**]':
             allowedOrigins: ${FRONTEND_ORIGIN:http://localhost:5173}
-            allowedMethods: "*"
-            allowedHeaders: "*"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - PATCH
+              - DELETE
+              - OPTIONS
+            allowedHeaders:
+              - Content-Type
+              - X-Requested-With
             allowCredentials: true
+            maxAge: 3600
 
 # Faza 9 — IpGuardFilter: detekcija brute-force login-a i sumnjivih (SQLi/payload) sekvenci po IP.
 # Prag neuspeha/strike-ova u prozoru -> privremeni blok (429) + prijava IP_BLOCKED događaja backendu.
