@@ -61,3 +61,39 @@ export async function updateSecret(
 export async function deleteSecret(id: string): Promise<void> {
   await apiClient.delete(`/vault/secrets/${id}`)
 }
+
+// ----- Faza 7: sigurno deljenje (envelope) -----
+
+/** Javni ključ korisnika (SPKI base64) — za uvijanje `secretKey` ka primaocu. */
+export interface PublicKeyResponse {
+  userId: string
+  publicKey: string
+}
+
+export interface ShareSecretRequest {
+  recipientId: string
+  /** secretKey uvijen ka javnom ključu PRIMAOCA (RSA-OAEP), base64. */
+  wrappedSecretKey: string
+}
+
+export interface ShareResponse {
+  secretId: string
+  recipientId: string
+  grantedById: string
+  createdAt: string
+}
+
+/** Dohvata javni ključ primaoca (`/users/{id}/public-key`). */
+export async function getUserPublicKey(userId: string): Promise<PublicKeyResponse> {
+  const res = await apiClient.get<PublicKeyResponse>(`/users/${userId}/public-key`)
+  return res.data
+}
+
+/** Deli tajnu sa primaocem (samo TEAM_LEAD; server vraća 403 inače). */
+export async function shareSecret(
+  id: string,
+  request: ShareSecretRequest,
+): Promise<ShareResponse> {
+  const res = await apiClient.post<ShareResponse>(`/vault/secrets/${id}/share`, request)
+  return res.data
+}

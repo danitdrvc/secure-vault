@@ -2,10 +2,12 @@ package com.securevault.user.service;
 
 import com.securevault.audit.service.AuditService;
 import com.securevault.common.error.ConflictException;
+import com.securevault.common.error.NotFoundException;
 import com.securevault.user.domain.Role;
 import com.securevault.user.domain.User;
 import com.securevault.user.domain.UserStatus;
 import com.securevault.user.repository.UserRepository;
+import com.securevault.user.web.PublicKeyResponse;
 import com.securevault.user.web.RegisterRequest;
 import com.securevault.user.web.RegisterResponse;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -13,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Base64;
+import java.util.UUID;
 
 /**
  * Poslovna logika korisničkog modula.
@@ -73,5 +76,16 @@ public class UserService {
                 saved.getEmail(),
                 saved.getRole(),
                 saved.getStatus());
+    }
+
+    /**
+     * Javni ključ korisnika za deljenje (Faza 7). Onaj ko deli tajnu njime uvija {@code secretKey}
+     * ka primaocu. Vraća samo SPKI javni ključ — nikad privatni materijal.
+     */
+    @Transactional(readOnly = true)
+    public PublicKeyResponse getPublicKey(UUID userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new NotFoundException("Korisnik ne postoji."));
+        return PublicKeyResponse.from(user);
     }
 }

@@ -1,8 +1,10 @@
 package com.securevault.vault.service;
 
 import com.securevault.audit.service.AuditService;
+import com.securevault.common.error.ConflictException;
 import com.securevault.common.error.ForbiddenException;
 import com.securevault.common.error.NotFoundException;
+import com.securevault.user.repository.UserRepository;
 import com.securevault.vault.domain.Secret;
 import com.securevault.vault.domain.SecretAccess;
 import com.securevault.vault.repository.SecretAccessRepository;
@@ -10,6 +12,8 @@ import com.securevault.vault.repository.SecretRepository;
 import com.securevault.vault.web.CreateSecretRequest;
 import com.securevault.vault.web.SecretDetailResponse;
 import com.securevault.vault.web.SecretSummaryResponse;
+import com.securevault.vault.web.ShareResponse;
+import com.securevault.vault.web.ShareSecretRequest;
 import com.securevault.vault.web.UpdateSecretRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,13 +38,16 @@ public class VaultService {
 
     private final SecretRepository secretRepository;
     private final SecretAccessRepository secretAccessRepository;
+    private final UserRepository userRepository;
     private final AuditService auditService;
 
     public VaultService(SecretRepository secretRepository,
                         SecretAccessRepository secretAccessRepository,
+                        UserRepository userRepository,
                         AuditService auditService) {
         this.secretRepository = secretRepository;
         this.secretAccessRepository = secretAccessRepository;
+        this.userRepository = userRepository;
         this.auditService = auditService;
     }
 
@@ -117,6 +124,44 @@ public class VaultService {
         secretRepository.delete(secret);
 
         auditService.record("SECRET_DELETED", userId, "secrets/" + secretId, "{}");
+    }
+
+    /**
+     * Deli tajnu sa primaocem (Faza 7) — envelope re-wrap. Onaj ko deli MORA imati pristup
+     * tajni (svoj {@code secret_access} red), jer samo tako može na klijentu da otvori i ponovo
+     * uvije {@code secretKey}. Server prima već uvijen {@code wrappedSecretKey} ka primaocu i
+     * upisuje nov pristupni red — {@code encryptedBlob} se NE menja (veliki blob se nikad ne
+     * re-šifruje). Ulogu {@code TEAM_LEAD} proverava {@code @PreAuthorize} na kontroleru.
+     */
+    @Transactional
+    public ShareResponse share(UUID sharerId, UUID secretId, ShareSecretRequest request) {
+        Secret secret = requireVisibleSecret(secretId);
+
+        // Onaj ko deli mora i sam imati pristup (vlasnik ili raniji primalac) — inače ne poseduje
+        // secretKey i deljenje ne bi imalo smisla (server to ne može kriptografski da proveri,
+        // ali pristupni red je nužan uslov).
+        if (secretAccessRepository.findBySecretIdAndUserId(secretId, sharerId).isEmpty()) {
+            throw new ForbiddenException("Nemate pristup ovoj tajni.");
+        }
+
+        UUID recipientId = request.recipientId();
+        if (!userRepository.existsById(recipientId)) {
+            throw new NotFoundException("Korisnik ne postoji.");
+        }
+        if (secretAccessRepository.findBySecretIdAndUserId(secretId, recipientId).isPresent()) {
+            throw new ConflictException("Tajna je već podeljena sa ovim korisnikom.");
+        }
+
+        SecretAccess access = new SecretAccess();
+        access.setSecretId(secretId);
+        access.setUserId(recipientId);
+        access.setWrappedSecretKey(Base64.getDecoder().decode(request.wrappedSecretKey()));
+        access.setGrantedById(sharerId);
+        SecretAccess saved = secretAccessRepository.save(access);
+
+        auditService.record("SECRET_SHARED", sharerId, "secrets/" + secretId,
+                "{\"recipientId\":\"" + recipientId + "\"}");
+        return ShareResponse.from(saved);
     }
 
     /** Učitava tajnu; honeytoken i nepostojeća tajna se jednako tretiraju kao {@code 404}. */

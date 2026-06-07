@@ -1,7 +1,12 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
 import { bootstrapKeys } from '../../crypto'
-import { decryptSecret, encryptNewSecret, reencryptSecret } from './vault-crypto'
+import {
+  decryptSecret,
+  encryptNewSecret,
+  reencryptSecret,
+  rewrapSecretForRecipient,
+} from './vault-crypto'
 
 const PW = 'master-lozinka-za-test-123'
 const PLAINTEXT = 'super-tajna-vrednost: API_KEY=abc123!@#'
@@ -54,5 +59,60 @@ describe('vault kripto tok (Faza 6)', () => {
     const decrypted = await decryptSecret(newBlob, wrappedSecretKey, keys.privateKey)
     expect(decrypted).toBe(updated)
     expect(newBlob).not.toBe(encryptedBlob)
+  })
+})
+
+describe('vault deljenje (Faza 7) — envelope re-wrap', () => {
+  it('posle deljenja PRIMALAC dešifruje istu tajnu; blob NEPROMENJEN', async () => {
+    const alice = await vaultKeys() // deli (Team Lead)
+    const bob = await vaultKeys() // prima
+
+    const { encryptedBlob, wrappedSecretKey } = await encryptNewSecret(PLAINTEXT, alice.publicKey)
+
+    // Alice otvori secretKey svojim privatnim ključem i uvije ga ka Bobovom javnom ključu.
+    const wrappedForBob = await rewrapSecretForRecipient(
+      wrappedSecretKey,
+      alice.privateKey,
+      bob.publicKey,
+    )
+
+    // Bob svojim privatnim ključem otvara ISTU tajnu iz NEPROMENJENOG bloba.
+    const decryptedByBob = await decryptSecret(encryptedBlob, wrappedForBob, bob.privateKey)
+    expect(decryptedByBob).toBe(PLAINTEXT)
+  })
+
+  it('wrappedSecretKey za Alice i Boba se razlikuju; nijedan nije plaintext (256B)', async () => {
+    const alice = await vaultKeys()
+    const bob = await vaultKeys()
+
+    const { wrappedSecretKey } = await encryptNewSecret(PLAINTEXT, alice.publicKey)
+    const wrappedForBob = await rewrapSecretForRecipient(
+      wrappedSecretKey,
+      alice.privateKey,
+      bob.publicKey,
+    )
+
+    expect(wrappedForBob).not.toBe(wrappedSecretKey)
+    expect(atob(wrappedForBob).length).toBe(256)
+    // Uvijeni ključ (RSA šifrat) ne sme da sadrži plaintext.
+    expect(wrappedForBob).not.toContain('API_KEY')
+  })
+
+  it('Bobov re-wrap NE može da otvori Aliceinim privatnim ključem (tuđi ne čita)', async () => {
+    const alice = await vaultKeys()
+    const bob = await vaultKeys()
+    const eve = await vaultKeys()
+
+    const { encryptedBlob, wrappedSecretKey } = await encryptNewSecret(PLAINTEXT, alice.publicKey)
+    const wrappedForBob = await rewrapSecretForRecipient(
+      wrappedSecretKey,
+      alice.privateKey,
+      bob.publicKey,
+    )
+
+    // Samo Bobov privatni ključ otvara ono što je uvijeno ka njemu — Eve ne može.
+    await expect(
+      decryptSecret(encryptedBlob, wrappedForBob, eve.privateKey),
+    ).rejects.toThrow()
   })
 })
