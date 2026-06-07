@@ -81,6 +81,18 @@ public class AuthController {
     }
 
     /**
+     * Promena master lozinke (Faza 8). Zahteva važeću sesiju + step-up dokaz stare lozinke
+     * ({@code currentAuthKey}). Server samo skladišti re-šifrovane artefakte — ne vidi nijedan
+     * ključ. Sesijski kolačići se NE menjaju (USK je isti, postojeći access token i dalje važi).
+     */
+    @PostMapping("/rotate-master")
+    public ResponseEntity<Void> rotateMaster(@AuthenticationPrincipal AuthenticatedUser principal,
+                                             @Valid @RequestBody RotateMasterRequest request) {
+        authService.rotateMaster(principal.id(), request);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
      * Šifrovani vault materijal za otključavanje (Faza 5). Zahteva važeću sesiju, ali sam
      * materijal je beskoristan bez master lozinke — koristi ga klijent posle OIDC prijave da
      * lokalno pozove {@code unlock}.

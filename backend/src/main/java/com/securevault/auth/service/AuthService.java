@@ -8,6 +8,7 @@ import com.securevault.auth.web.LoginStep1Request;
 import com.securevault.auth.web.LoginStep1Response;
 import com.securevault.auth.web.LoginStep2Request;
 import com.securevault.auth.web.LoginStep2Response;
+import com.securevault.auth.web.RotateMasterRequest;
 import com.securevault.auth.web.TotpSetupResponse;
 import com.securevault.auth.web.VaultMaterial;
 import com.securevault.common.error.ForbiddenException;
@@ -146,6 +147,31 @@ public class AuthService {
 
         LoginStep2Response body = new LoginStep2Response(AuthUserResponse.from(user), VaultMaterial.from(user));
         return new LoginResult(tokens, body);
+    }
+
+    /**
+     * Promena master lozinke (Faza 8). Re-šifruje samo {@code encUsk}/{@code encPrivateKey}
+     * (USK ostaje isti → sve tajne i deljenja rade i sa novom lozinkom) i menja
+     * {@code auth_hash} + KDF parametre. Pre izmene traži step-up dokaz STARE lozinke
+     * ({@code currentAuthKey}); mismatch → {@code 401}. Server i dalje ne vidi nijedan ključ.
+     */
+    @Transactional
+    public void rotateMaster(UUID userId, RotateMasterRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UnauthorizedException("Nalog ne postoji."));
+        if (!passwordEncoder.matches(request.currentAuthKey(), user.getAuthHash())) {
+            throw new UnauthorizedException("Trenutna master lozinka nije ispravna.");
+        }
+
+        Base64.Decoder decoder = Base64.getDecoder();
+        user.setAuthHash(passwordEncoder.encode(request.authKey()));
+        user.setKdfSalt(decoder.decode(request.kdfSalt()));
+        user.setKdfIterations(request.kdfIterations());
+        user.setEncUsk(decoder.decode(request.encUsk()));
+        user.setEncPrivateKey(decoder.decode(request.encPrivateKey()));
+        userRepository.save(user);
+
+        auditService.record("MASTER_ROTATED", userId, "users/" + userId, "{}");
     }
 
     /** Trenutni autentikovan korisnik (za {@code GET /auth/me}). */

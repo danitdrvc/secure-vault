@@ -8,8 +8,10 @@ import {
   createSecret,
   deleteSecret,
   getSecret,
+  getSecretAccess,
   getUserPublicKey,
   listSecrets,
+  rotateSecretApi,
   shareSecret,
   updateSecret,
 } from './api'
@@ -19,7 +21,10 @@ import {
   encryptNewSecret,
   reencryptSecret,
   rewrapSecretForRecipient,
+  rotateSecret,
 } from './vault-crypto'
+import type { RotationRecipient } from './vault-crypto'
+import { isRotationDue } from './rotation'
 
 type Status = 'idle' | 'busy' | 'error'
 
@@ -28,6 +33,8 @@ interface OpenSecret {
   id: string
   plaintext: string
   wrappedSecretKey: string
+  /** Da li je rok rotacije istekao (rotated_at + rotation_days u prošlosti) — prikaži upozorenje. */
+  rotationDue: boolean
 }
 
 /** Iz axios/greške izvlači poruku iz konzistentnog oblika { error: { message } }. */
@@ -57,6 +64,7 @@ export default function VaultPage() {
 
   const [newName, setNewName] = useState('')
   const [newValue, setNewValue] = useState('')
+  const [newRotationDays, setNewRotationDays] = useState('')
 
   const [open, setOpen] = useState<OpenSecret | null>(null)
   const [editName, setEditName] = useState('')
@@ -103,9 +111,11 @@ export default function VaultPage() {
     setMessage('')
     try {
       const { encryptedBlob, wrappedSecretKey } = await encryptNewSecret(newValue, vault!.publicKey)
-      await createSecret({ name: newName.trim(), encryptedBlob, wrappedSecretKey })
+      const rotationDays = newRotationDays.trim() === '' ? null : Number(newRotationDays)
+      await createSecret({ name: newName.trim(), encryptedBlob, wrappedSecretKey, rotationDays })
       setNewName('')
       setNewValue('')
+      setNewRotationDays('')
       setMessage('Tajna je sačuvana (šifrovana na klijentu).')
       await refresh()
     } catch (err) {
@@ -120,9 +130,41 @@ export default function VaultPage() {
     try {
       const detail = await getSecret(id)
       const plaintext = await decryptSecret(detail.encryptedBlob, detail.wrappedSecretKey, vault!.privateKey)
-      setOpen({ id, plaintext, wrappedSecretKey: detail.wrappedSecretKey })
+      // Server ne okida rotaciju automatski (zero-knowledge) — klijent pri otvaranju proveri rok.
+      const rotationDue = isRotationDue(detail.rotatedAt, detail.rotationDays)
+      setOpen({ id, plaintext, wrappedSecretKey: detail.wrappedSecretKey, rotationDue })
       setEditName(detail.name)
       setStatus('idle')
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }
+
+  /**
+   * Rotacija tajne (Faza 8): nov secretKey, re-šifrovan blob i re-wrap ka SVIM primaocima.
+   * Vlasnik dohvati listu primaoca i njihove javne ključeve, pa uvije nov ključ ka svakome.
+   */
+  async function onRotate() {
+    if (!open) {
+      return
+    }
+    setStatus('busy')
+    setMessage('')
+    try {
+      const accessList = await getSecretAccess(open.id)
+      const recipients: RotationRecipient[] = await Promise.all(
+        accessList.map(async (entry) => {
+          const pk = await getUserPublicKey(entry.userId)
+          return { userId: entry.userId, publicKey: await importPublicKey(base64ToBytes(pk.publicKey)) }
+        }),
+      )
+      const { encryptedBlob, wrappedKeys } = await rotateSecret(open.plaintext, recipients)
+      await rotateSecretApi(open.id, { encryptedBlob, wrappedKeys })
+      setOpen({ ...open, rotationDue: false })
+      setMessage('Tajna je rotirana (nov ključ; stari više ne otvara novi sadržaj).')
+      setStatus('idle')
+      await refresh()
     } catch (err) {
       setStatus('error')
       setMessage(extractError(err))
@@ -216,6 +258,16 @@ export default function VaultPage() {
             required
           />
         </label>
+        <label style={fieldStyle}>
+          Rok rotacije u danima (opciono)
+          <input
+            type="number"
+            min={1}
+            value={newRotationDays}
+            onChange={(e) => setNewRotationDays(e.target.value)}
+            placeholder="npr. 90 — prazno = bez rotacije"
+          />
+        </label>
         <button type="submit" disabled={busy}>
           {busy ? 'Šifrovanje...' : 'Sačuvaj tajnu'}
         </button>
@@ -276,6 +328,27 @@ export default function VaultPage() {
 
               {open?.id === secret.id && (
                 <form onSubmit={onSaveEdit} style={{ marginTop: 12 }}>
+                  {open.rotationDue && (
+                    <div
+                      data-testid={`rotation-warning-${secret.id}`}
+                      style={{
+                        border: '1px solid #f0c000',
+                        background: '#fff8e1',
+                        borderRadius: 6,
+                        padding: 10,
+                        marginBottom: 12,
+                      }}
+                    >
+                      <span style={{ color: '#8a6d00' }}>
+                        ⚠️ Tajna je istekla — preporučena rotacija.
+                      </span>
+                      <div style={{ marginTop: 8 }}>
+                        <button type="button" onClick={onRotate} disabled={busy}>
+                          Rotiraj sada
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <label style={fieldStyle}>
                     Naziv
                     <input value={editName} onChange={(e) => setEditName(e.target.value)} required />

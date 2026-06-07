@@ -6,6 +6,7 @@ import {
   encryptNewSecret,
   reencryptSecret,
   rewrapSecretForRecipient,
+  rotateSecret,
 } from './vault-crypto'
 
 const PW = 'master-lozinka-za-test-123'
@@ -114,5 +115,55 @@ describe('vault deljenje (Faza 7) — envelope re-wrap', () => {
     await expect(
       decryptSecret(encryptedBlob, wrappedForBob, eve.privateKey),
     ).rejects.toThrow()
+  })
+})
+
+describe('vault rotacija tajne (Faza 8) — nov secretKey + re-wrap', () => {
+  it('NOVA wrapped otvara nov blob; STARA wrapped ga više ne otvara', async () => {
+    const keys = await vaultKeys()
+    const original = await encryptNewSecret(PLAINTEXT, keys.publicKey)
+
+    const rotated = await rotateSecret('rotirana-nova-vrednost-999', [
+      { userId: 'owner', publicKey: keys.publicKey },
+    ])
+
+    // Nova wrapped (nov secretKey) otvara nov blob i vraća novi sadržaj.
+    const decrypted = await decryptSecret(
+      rotated.encryptedBlob,
+      rotated.wrappedKeys[0].wrappedSecretKey,
+      keys.privateKey,
+    )
+    expect(decrypted).toBe('rotirana-nova-vrednost-999')
+
+    // STARA wrapped (stari secretKey) NE otvara novi blob — AES-GCM auth pada.
+    await expect(
+      decryptSecret(rotated.encryptedBlob, original.wrappedSecretKey, keys.privateKey),
+    ).rejects.toThrow()
+  })
+
+  it('re-wrap ka SVIM primaocima: svako svojim ključem otvara isti nov sadržaj', async () => {
+    const owner = await vaultKeys()
+    const recipient = await vaultKeys()
+
+    const rotated = await rotateSecret('deljiva-rotirana', [
+      { userId: 'owner', publicKey: owner.publicKey },
+      { userId: 'recipient', publicKey: recipient.publicKey },
+    ])
+
+    const byOwner = await decryptSecret(
+      rotated.encryptedBlob,
+      rotated.wrappedKeys[0].wrappedSecretKey,
+      owner.privateKey,
+    )
+    const byRecipient = await decryptSecret(
+      rotated.encryptedBlob,
+      rotated.wrappedKeys[1].wrappedSecretKey,
+      recipient.privateKey,
+    )
+
+    expect(byOwner).toBe('deljiva-rotirana')
+    expect(byRecipient).toBe('deljiva-rotirana')
+    // Uvijeni ključevi se razlikuju (uvijeni ka različitim javnim ključevima).
+    expect(rotated.wrappedKeys[0].wrappedSecretKey).not.toBe(rotated.wrappedKeys[1].wrappedSecretKey)
   })
 })

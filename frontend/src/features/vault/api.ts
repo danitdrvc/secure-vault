@@ -20,6 +20,10 @@ export interface SecretDetail {
   encryptedBlob: string
   /** secretKey uvijen ka mom javnom ključu (RSA-OAEP), base64 — otvara ga samo moj privatni ključ. */
   wrappedSecretKey: string
+  /** Rok rotacije u danima (`null` = bez rotacije). */
+  rotationDays: number | null
+  /** Vreme poslednje rotacije (ISO); klijent poredi `rotatedAt + rotationDays` sa sada. */
+  rotatedAt: string
   createdAt: string
   updatedAt: string
 }
@@ -28,11 +32,24 @@ export interface CreateSecretRequest {
   name: string
   encryptedBlob: string
   wrappedSecretKey: string
+  /** Opcioni rok rotacije u danima (`null`/izostavljeno = bez rotacije). */
+  rotationDays?: number | null
 }
 
 export interface UpdateSecretRequest {
   name: string
   encryptedBlob: string
+}
+
+/** Jedan korisnik koji ima pristup tajni (vlasnik je dohvata pre rotacije). */
+export interface SecretAccessEntry {
+  userId: string
+}
+
+/** Telo rotacije: nov blob + nov wrappedSecretKey za SVAKOG postojećeg primaoca. */
+export interface RotateSecretRequest {
+  encryptedBlob: string
+  wrappedKeys: { userId: string; wrappedSecretKey: string }[]
 }
 
 export async function createSecret(request: CreateSecretRequest): Promise<SecretSummary> {
@@ -60,6 +77,23 @@ export async function updateSecret(
 
 export async function deleteSecret(id: string): Promise<void> {
   await apiClient.delete(`/vault/secrets/${id}`)
+}
+
+// ----- Faza 8: rotacija tajne (nov secretKey + re-wrap ka svim primaocima) -----
+
+/** Lista primaoca tajne (vlasnik-only) — da bismo pri rotaciji uvili nov ključ ka svakome. */
+export async function getSecretAccess(id: string): Promise<SecretAccessEntry[]> {
+  const res = await apiClient.get<SecretAccessEntry[]>(`/vault/secrets/${id}/access`)
+  return res.data
+}
+
+/** Rotira secretKey tajne (samo vlasnik; mora re-wrap-ovati tačno sve primaoce). */
+export async function rotateSecretApi(
+  id: string,
+  request: RotateSecretRequest,
+): Promise<SecretSummary> {
+  const res = await apiClient.post<SecretSummary>(`/vault/secrets/${id}/rotate`, request)
+  return res.data
 }
 
 // ----- Faza 7: sigurno deljenje (envelope) -----

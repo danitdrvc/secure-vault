@@ -69,6 +69,28 @@ public class VaultController {
     }
 
     /**
+     * Lista primaoca tajne (vlasnik-only). Vlasnik je koristi pre rotacije da bi pribavio javne
+     * ključeve svih primaoca i uvio nov {@code secretKey} ka svakome.
+     */
+    @GetMapping("/{id}/access")
+    public List<SecretAccessResponse> access(@AuthenticationPrincipal AuthenticatedUser principal,
+                                             @PathVariable UUID id) {
+        return vaultService.listAccess(principal.id(), id);
+    }
+
+    /**
+     * Rotacija {@code secretKey}-a (Faza 8) — nov ključ + re-šifrovan blob + re-wrap ka svim
+     * primaocima. Samo vlasnik; {@code wrappedKeys} mora pokriti tačno sve postojeće primaoce.
+     * Stara {@code wrapped_secret_key} posle ovoga ne otvara novi blob.
+     */
+    @PostMapping("/{id}/rotate")
+    public SecretSummaryResponse rotate(@AuthenticationPrincipal AuthenticatedUser principal,
+                                        @PathVariable UUID id,
+                                        @Valid @RequestBody RotateSecretRequest request) {
+        return vaultService.rotate(principal.id(), id, request);
+    }
+
+    /**
      * Deli tajnu sa primaocem (Faza 7). SAMO uloga {@code TEAM_LEAD} ({@code @PreAuthorize});
      * {@code Developer} dobija {@code 403}. Server prima već uvijen {@code wrappedSecretKey} ka
      * primaocu — {@code encryptedBlob} se ne dira (envelope deljenje, zero-knowledge očuvan).

@@ -1,6 +1,8 @@
 package com.securevault.vault.web;
 
 import com.securevault.common.validation.Base64Bytes;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
@@ -12,6 +14,8 @@ import jakarta.validation.constraints.Size;
  *   <li>{@code encryptedBlob} — AES-256-GCM(secretKey, plaintext): nonce(12) + ct + tag(16),
  *       tj. najmanje 28 B; gornja granica dozvoljava i veće tajne (npr. sertifikate).</li>
  *   <li>{@code wrappedSecretKey} — RSA-OAEP-2048(secretKey, vlasnikov javni ključ) = tačno 256 B.</li>
+ *   <li>{@code rotationDays} — opcioni rok rotacije ({@code null} = bez rotacije); klijent ga
+ *       koristi za upozorenje o isteku (Faza 8).</li>
  * </ul>
  */
 public record CreateSecretRequest(
@@ -26,6 +30,10 @@ public record CreateSecretRequest(
 
         @NotBlank
         @Base64Bytes(min = 256, max = 256, message = "wrappedSecretKey mora biti RSA-OAEP-2048 šifrat (256 bajtova)")
-        String wrappedSecretKey
+        String wrappedSecretKey,
+
+        @Min(value = 1, message = "rotationDays mora biti pozitivan")
+        @Max(value = 3650, message = "rotationDays je nerealno velik")
+        Integer rotationDays
 ) {
 }
