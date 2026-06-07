@@ -142,3 +142,67 @@ export async function unlock(
 
   return { usk, privateKey }
 }
+
+/** Re-šifrovani artefakti za {@code POST /auth/rotate-master} (Faza 8). */
+export interface MasterRotationArtifacts {
+  /** Dokaz STARE lozinke; server ga poredi sa `auth_hash` pre primene izmene. */
+  currentAuthKey: Bytes
+  /** Novi dokaz identiteta; server čuva samo `bcrypt(authKey)`. */
+  authKey: Bytes
+  /** Svež PBKDF2 salt (dobra praksa pri promeni lozinke). */
+  kdfSalt: Bytes
+  kdfIterations: number
+  /** AES-GCM(noviKEK, USK) — USK je NEPROMENJEN. */
+  encUsk: Bytes
+  /** AES-GCM(USK, PKCS8) sa svežim nonce-om. */
+  encPrivateKey: Bytes
+}
+
+/**
+ * Promena master lozinke bez diranja tajni (Faza 8).
+ *
+ * Otključa stari KEK i USK starom lozinkom, izvede NOV KEK/authKey iz nove lozinke (uz svež
+ * salt) i re-šifruje SAMO `encUsk` (pod novim KEK) i `encPrivateKey` (pod ISTIM USK, svež nonce).
+ * Pošto USK i privatni ključ ostaju isti, sve postojeće tajne i deljenja rade i sa novom lozinkom.
+ *
+ * Pogrešna stara lozinka → pogrešan stari KEK → AES-GCM auth pada → `CryptoError`. Master lozinka,
+ * KEK i USK (plaintext) NIKAD ne napuštaju čitač.
+ */
+export async function rotateMasterKey(
+  oldPassword: string,
+  newPassword: string,
+  kdfSalt: Bytes,
+  kdfIterations: number,
+  encUsk: Bytes,
+  encPrivateKey: Bytes,
+): Promise<MasterRotationArtifacts> {
+  // 1) Otključaj stari KEK i USK; izvedi dokaz stare lozinke.
+  const oldMaster = await deriveMasterKey(oldPassword, kdfSalt, kdfIterations)
+  const oldKek = await deriveKek(oldMaster)
+  const currentAuthKey = await deriveAuthKey(oldMaster)
+
+  const uskRaw = await aesGcmDecrypt(oldKek, encUsk)
+  const usk = await importAesGcmKey(uskRaw)
+  // Privatni ključ kao bajtovi (nikad kao CryptoKey) — re-šifruje se ISTIM USK sa svežim nonce-om.
+  const privateKeyPkcs8 = await aesGcmDecrypt(usk, encPrivateKey)
+
+  // 2) Nova lozinka → svež salt, nov KEK i authKey.
+  const newSalt = crypto.getRandomValues(new Uint8Array(KDF_SALT_BYTES))
+  const newIterations = DEFAULT_KDF_ITERATIONS
+  const newMaster = await deriveMasterKey(newPassword, newSalt, newIterations)
+  const newKek = await deriveKek(newMaster)
+  const authKey = await deriveAuthKey(newMaster)
+
+  // 3) Re-šifruj USK pod novim KEK; privatni ključ ostaje pod istim USK (svež nonce).
+  const newEncUsk = await aesGcmEncrypt(newKek, uskRaw)
+  const newEncPrivateKey = await aesGcmEncrypt(usk, privateKeyPkcs8)
+
+  return {
+    currentAuthKey,
+    authKey,
+    kdfSalt: newSalt,
+    kdfIterations: newIterations,
+    encUsk: newEncUsk,
+    encPrivateKey: newEncPrivateKey,
+  }
+}

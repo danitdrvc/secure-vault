@@ -124,3 +124,32 @@ export async function fetchVaultMaterial(): Promise<VaultMaterial> {
   const res = await apiClient.get<VaultMaterial>('/auth/vault-material')
   return res.data
 }
+
+// ----- Faza 8: politika (klijentski podskup) + promena master lozinke -----
+
+/** Klijentski podskup sigurnosne politike (`GET /policy`). */
+export interface ClientPolicy {
+  minMasterPwLength: number
+  defaultRotationDays: number
+}
+
+export async function fetchClientPolicy(): Promise<ClientPolicy> {
+  const res = await apiClient.get<ClientPolicy>('/policy')
+  return res.data
+}
+
+/** Telo za promenu master lozinke — svi kripto artefakti su base64 (server ih čuva kao bytea). */
+export interface RotateMasterRequest {
+  /** Dokaz STARE lozinke (step-up re-auth). */
+  currentAuthKey: string
+  authKey: string
+  kdfSalt: string
+  kdfIterations: number
+  encUsk: string
+  encPrivateKey: string
+}
+
+/** Promena master lozinke (`POST /auth/rotate-master`); telo je prazno na uspeh (204). */
+export async function rotateMaster(request: RotateMasterRequest): Promise<void> {
+  await apiClient.post('/auth/rotate-master', request)
+}

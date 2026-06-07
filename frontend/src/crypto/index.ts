@@ -17,11 +17,12 @@ export {
   exportPrivateKey,
   importPrivateKey,
 } from './asym'
-export { bootstrapKeys, unlock, deriveLoginAuthKey } from './vault'
+export { bootstrapKeys, unlock, deriveLoginAuthKey, rotateMasterKey } from './vault'
 export type {
   RegistrationArtifacts,
   UnlockedVault,
   VaultKeys,
   BootstrapResult,
+  MasterRotationArtifacts,
 } from './vault'
 export type { Bytes } from './bytes'

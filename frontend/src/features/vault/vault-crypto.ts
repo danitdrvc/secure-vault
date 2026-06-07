@@ -100,3 +100,41 @@ export async function rewrapSecretForRecipient(
   const wrappedForRecipient = await wrapTo(recipientPublicKey, secretKeyRaw)
   return bytesToBase64(wrappedForRecipient)
 }
+
+/** Jedan primalac kome se uvija nov `secretKey` pri rotaciji (njegov `userId` + javni ključ). */
+export interface RotationRecipient {
+  userId: string
+  publicKey: CryptoKey
+}
+
+/** Rezultat rotacije: nov blob + nov `wrappedSecretKey` po svakom primaocu (base64). */
+export interface RotatedSecret {
+  encryptedBlob: string
+  wrappedKeys: { userId: string; wrappedSecretKey: string }[]
+}
+
+/**
+ * Rotacija `secretKey`-a (Faza 8). Generiše POTPUNO NOV `secretKey`, njime re-šifruje sadržaj i
+ * uvija novi ključ ka SVIM primaocima (vlasnik + svi sa kojima je deljeno). Pošto je i ključ i
+ * blob nov, STARA `wrappedSecretKey` (uvijen stari ključ) više ne otvara novi blob — AES-GCM
+ * autentikacija pada. Server vidi samo šifrat; plaintext `secretKey` ne napušta čitač.
+ */
+export async function rotateSecret(
+  plaintext: string,
+  recipients: RotationRecipient[],
+): Promise<RotatedSecret> {
+  const secretKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, [
+    'encrypt',
+    'decrypt',
+  ])
+  const encryptedBlob = await aesGcmEncrypt(secretKey, utf8(plaintext))
+  const secretKeyRaw = new Uint8Array(await crypto.subtle.exportKey('raw', secretKey))
+
+  const wrappedKeys = await Promise.all(
+    recipients.map(async (recipient) => ({
+      userId: recipient.userId,
+      wrappedSecretKey: bytesToBase64(await wrapTo(recipient.publicKey, secretKeyRaw)),
+    })),
+  )
+  return { encryptedBlob: bytesToBase64(encryptedBlob), wrappedKeys }
+}

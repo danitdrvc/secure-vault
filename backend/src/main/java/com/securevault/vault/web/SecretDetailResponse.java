@@ -14,9 +14,14 @@ import java.util.UUID;
  *   <li>{@code wrappedSecretKey} — secretKey uvijen ka javnom ključu OVOG korisnika (njegov red
  *       u {@code secret_access}); samo njegov privatni ključ ga otvara.</li>
  * </ul>
+ *
+ * <p>{@code rotationDays} ({@code null} = bez rotacije) i {@code rotatedAt} su metapodaci rotacije
+ * (Faza 8): klijent pri otvaranju poredi {@code rotatedAt + rotationDays} sa sada i, ako je
+ * isteklo, prikazuje upozorenje sa akcijom „Rotiraj sada". Server ne okida ništa automatski.
  */
 public record SecretDetailResponse(UUID id, String name, String encryptedBlob,
                                    String wrappedSecretKey,
+                                   Integer rotationDays, OffsetDateTime rotatedAt,
                                    OffsetDateTime createdAt, OffsetDateTime updatedAt) {
 
     public static SecretDetailResponse from(Secret secret, byte[] wrappedSecretKey) {
@@ -26,6 +31,8 @@ public record SecretDetailResponse(UUID id, String name, String encryptedBlob,
                 secret.getName(),
                 b64.encodeToString(secret.getEncryptedBlob()),
                 b64.encodeToString(wrappedSecretKey),
+                secret.getRotationDays(),
+                secret.getRotatedAt(),
                 secret.getCreatedAt(),
                 secret.getUpdatedAt());
     }

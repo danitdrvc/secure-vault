@@ -10,11 +10,11 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - [x] Faza 5  — OIDC Prijava
 - [x] Faza 6  — Vault CRUD
 - [x] Faza 7  — Sigurno Deljenje
-- [ ] Faza 8  — Admin i Sigurnosne Politike
+- [x] Faza 8  — Admin i Sigurnosne Politike
 - [ ] Faza 9  — API Gateway i Rate Limiting
 - [ ] Faza 10 — Honeypot i Honeytokens
 - [ ] Faza 11 — Imutable Audit Log
-- [ ] Faza 12 — Integracija i Dockerizacija
+- [ ] Faza 12 — Integracija i Hardening (Dockerizacija preskočena)
 
 ---
 
@@ -436,3 +436,89 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 > Napomena: deljenje ide po `recipientId` (UUID) — UI ima polje za ID primaoca. Lookup po
 > korisničkom imenu i opoziv pristupa (revoke) nisu deo Faze 7; admin upravljanje ulogama dolazi
 > u Fazi 8 (ovde se uloga `TEAM_LEAD` u testovima postavlja direktno u repozitorijumu).
+
+---
+
+## Faza 8 — Admin i Sigurnosne Politike
+
+**Šta je urađeno:**
+- **Backend admin nalozi** — `PATCH /admin/users/{id}/status` (`AdminUserController` → `UserService
+  .updateStatus`). SAMO uloga `ADMIN` (`@PreAuthorize("hasRole('ADMIN')")` na kontroleru). Admin
+  aktivira/deaktivira nalog; dozvoljene ciljne vrednosti su SAMO `ACTIVE`/`DEACTIVATED` (`FROZEN` je
+  rezervisan za honeypot okidač iz Faze 10 → `400 VALIDATION` ako se pošalje). Deaktivacija odmah
+  zaustavlja login (postojeća provera u `AuthService.step1` vraća `403` za svaki status ≠ `ACTIVE`).
+  Audit stub `USER_STATUS_CHANGED`. Novi DTO-i `UpdateUserStatusRequest`/`AdminUserResponse`.
+- **Backend sigurnosna politika** (`policy` modul: `web/` + `service/`, nad postojećim `domain/`+
+  `repository/` iz Faze 1):
+  - `GET /policy` — klijentski podskup (`ClientPolicyResponse`: `minMasterPwLength`,
+    `defaultRotationDays`); svaka važeća sesija. Klijent njime vodi scenario „povećana min dužina".
+  - `GET /admin/policy`, `PATCH /admin/policy` — pun pregled/izmena (`PolicyResponse`); SAMO `ADMIN`.
+    PATCH je parcijalan (`UpdatePolicyRequest`, sva polja opciona → menja samo ne-null). „Trajanje
+    sesije" se izlaže kao `sessionMaxTtlSec` (apsolutni cap), uz zasebne `accessTokenTtlSec` (prozor
+    rotacije) i `refreshTokenTtlSec`. TTL-ove iz politike `TokenService` čita u runtime-u → izmena
+    odmah utiče na sledeće tokene. Audit stub `POLICY_UPDATED`.
+- **Backend promena master lozinke** — `POST /auth/rotate-master` (`AuthController` → `AuthService
+  .rotateMaster`). Zahteva važeću sesiju + step-up dokaz STARE lozinke (`currentAuthKey`, poredi se
+  sa `bcrypt(auth_hash)`; mismatch → `401`). Server zameni `auth_hash`, KDF parametre i re-šifrovane
+  `encUsk`/`encPrivateKey`; **USK ostaje isti → svi postojeći blobovi tajni i deljenja rade i sa
+  novom lozinkom**. Sesijski kolačići se NE menjaju. Audit stub `MASTER_ROTATED`. DTO
+  `RotateMasterRequest` (`@Base64Bytes` veličine kao registracija).
+- **Backend rotacija tajne** — `POST /vault/secrets/{id}/rotate` + `GET /vault/secrets/{id}/access`
+  (`VaultController` → `VaultService.rotate`/`listAccess`, oba vlasnik-only). Rotacija: nov blob +
+  re-wrap ka SVIM postojećim primaocima; `wrappedKeys` mora pokriti TAČNO skup `secret_access` redova
+  (manjak/višak → `400 VALIDATION`). Upisuje novi blob, osvežava `rotated_at`, menja `wrapped_secret_key`
+  svakom primaocu — stara `wrapped_secret_key` time prestaje da otvara novi blob. Audit `SECRET_ROTATED`.
+  DTO `RotateSecretRequest` (+ `WrappedKeyEntry`), `SecretAccessResponse`.
+- **Rok rotacije (metapodaci)** — `secrets.rotation_days`/`rotated_at` (iz Faze 1) sada izloženi:
+  `CreateSecretRequest` prima opcioni `rotationDays`; `SecretDetailResponse` vraća `rotationDays`+
+  `rotatedAt`. Server NE okida rotaciju automatski (zero-knowledge) — odluku donosi klijent pri
+  otvaranju tajne.
+- **Tipizovana greška** — nova `common/error/ValidationException` (`400 VALIDATION`) za poslovne
+  invarijante (npr. nepotpun re-wrap, nedozvoljen status); `GlobalExceptionHandler` je već mapira
+  preko `AppException` baze.
+- **Frontend kripto** (čiste fn, bez mreže):
+  - `crypto/vault.ts` `rotateMasterKey(stara, nova, ...)` → otključa stari KEK/USK, izvede nov KEK/
+    authKey iz nove lozinke (svež salt) i re-šifruje `encUsk` (nov KEK) + `encPrivateKey` (isti USK,
+    svež nonce). Vraća `MasterRotationArtifacts` (+ `currentAuthKey` kao dokaz stare lozinke).
+  - `features/vault/vault-crypto.ts` `rotateSecret(plaintext, recipients)` → nov slučajan `secretKey`,
+    re-šifrovan blob, uvijanje ka javnom ključu SVAKOG primaoca.
+  - `features/vault/rotation.ts` `isRotationDue(rotatedAt, rotationDays, now)` — `null`/`≤0`/nevažeći
+    datum → `false`; inače istekao kad je `rotatedAt + rotationDays` u prošlosti.
+  - `features/auth/master-rotation.ts` `buildRotateMasterRequest` (sastavi base64 telo iz materijala).
+- **Frontend UI** — `features/admin/admin-page.tsx` (ruta `/admin`, samo `ADMIN`): status naloga +
+  editor politike (`features/admin/api.ts`). `features/auth/change-master-form.tsx` (ruta `/account`):
+  scenario „povećana min dužina" — dohvati `GET /policy`, upozori ako je trenutna lozinka kraća, pa
+  lokalno re-šifruje i pošalje. `vault-page.tsx`: opcioni „Rok rotacije (dani)" pri kreiranju; pri
+  otvaranju tajne `isRotationDue` prikaže upozorenje („Tajna je istekla — preporučena rotacija") +
+  „Rotiraj sada" (dohvati access listu → javne ključeve → `rotateSecret` → `POST .../rotate`).
+
+**Acceptance Criteria:**
+- [x] Deaktiviran korisnik ne može da se uloguje (`403` u step1). *(`AdminPolicyTest
+  .adminDeaktiviraNalogKojiViseNeMozeDaSeUloguje`: admin PATCH → `DEACTIVATED`, dev step1 → `403`;
+  reaktivacija → step1 ponovo prolazi. `developerNeMozeDaMenjaStatus`/`developerNeMozeAdminPolicy`:
+  ne-admin → `403`; `adminNeMozePostavitiFrozen` → `400`.)*
+- [x] Posle `rotate-master`, login NOVOM lozinkom otključava sve postojeće tajne (blobovi netaknuti).
+  *(Frontend `master-rotation.test.ts`: nova lozinka rekonstruiše IDENTIČAN USK, stara ne otključava,
+  tajna šifrovana PRE promene se otvara privatnim ključem iz unlock-a. Backend `MasterRotationTest
+  .rotacijaMenjaAuthIEncUskAliNeDiraTajne`: stari authKey → `401`, novi → `200`, `enc_usk` promenjen,
+  `encrypted_blob` tajne bajt-za-bajt NETAKNUT; `pogresnaTrenutnaLozinkaOdbijaRotaciju` → `401`.)*
+- [x] Otvaranje tajne čiji je `rotated_at + rotation_days` u prošlosti prikazuje upozorenje; `null`/
+  nevažeći rok ga NE prikazuje. *(`rotation.test.ts`: istekla/granica → `true`; `null`/`0`/negativan/
+  nevažeći datum → `false`. UI: `vault-page.tsx` `isRotationDue` puni `open.rotationDue` →
+  `rotation-warning-{id}` + „Rotiraj sada".)*
+- [x] Rotacija tajne: stara `wrapped_secret_key` više ne otvara novi blob; nova otvara.
+  *(`vault.test.ts` „NOVA wrapped otvara nov blob; STARA wrapped ga više ne otvara" + re-wrap ka više
+  primaoca. Backend `SecretRotationTest.vlasnikRotiraTajnuBlobIWrappedSeMenjaju`: blob i
+  `wrapped_secret_key` se menjaju, `rotated_at` osvežen; `rotacijaMoraReWrapovatiSvePrimaoce`:
+  nepotpun re-wrap → `400`; `neVlasnikNeMozeDaRotiraNitiVidiAccess` → `403`.)*
+
+**Verifikacija (lokalno, hand-installed JDK 21 + Maven 3.9.9 — bez Dockera):**
+- `mvn -f backend/pom.xml test` → **BUILD SUCCESS, 51 testa, 0 grešaka** (14 novih: `AdminPolicyTest` 7,
+  `MasterRotationTest` 3, `SecretRotationTest` 4; `@SpringBootTest` + MockMvc nad embedded PG16).
+- `npm test` (`frontend/`) → **12 test fajlova, 42 testa, 0 grešaka** (12 novih: `rotation.test.ts` 6,
+  `master-rotation.test.ts` 4, `vault.test.ts` +2).
+- `npm run build` (`tsc && vite build`) → čist type-check + build.
+
+> Napomena: rotacija tajne re-wrap-uje SVE primaoce, pa klijent pri rotaciji dohvati `GET
+> /vault/secrets/{id}/access` (vlasnik-only) i javne ključeve svih (`/users/{id}/public-key`).
+> Promena master lozinke ne dira tajne (USK je nepromenjen), pa nema potrebe za ponovnim loginom.

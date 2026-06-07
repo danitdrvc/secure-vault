@@ -3,10 +3,12 @@ package com.securevault.user.service;
 import com.securevault.audit.service.AuditService;
 import com.securevault.common.error.ConflictException;
 import com.securevault.common.error.NotFoundException;
+import com.securevault.common.error.ValidationException;
 import com.securevault.user.domain.Role;
 import com.securevault.user.domain.User;
 import com.securevault.user.domain.UserStatus;
 import com.securevault.user.repository.UserRepository;
+import com.securevault.user.web.AdminUserResponse;
 import com.securevault.user.web.PublicKeyResponse;
 import com.securevault.user.web.RegisterRequest;
 import com.securevault.user.web.RegisterResponse;
@@ -87,5 +89,27 @@ public class UserService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new NotFoundException("Korisnik ne postoji."));
         return PublicKeyResponse.from(user);
+    }
+
+    /**
+     * Admin aktivira/deaktivira nalog (Faza 8). Dozvoljene ciljne vrednosti su SAMO
+     * {@code ACTIVE} i {@code DEACTIVATED} — {@code FROZEN} je rezervisan za honeypot okidač
+     * (Faza 10) i ne postavlja se ručno. {@code ACTIVE} ujedno odmrzava zamrznut nalog
+     * (admin reaktivacija). Deaktivacija odmah zaustavlja login (provera u {@code step1}).
+     */
+    @Transactional
+    public AdminUserResponse updateStatus(UUID adminId, UUID targetId, UserStatus status) {
+        if (status != UserStatus.ACTIVE && status != UserStatus.DEACTIVATED) {
+            throw new ValidationException("Admin može postaviti samo ACTIVE ili DEACTIVATED.");
+        }
+        User user = userRepository.findById(targetId)
+                .orElseThrow(() -> new NotFoundException("Korisnik ne postoji."));
+
+        user.setStatus(status);
+        User saved = userRepository.save(user);
+
+        auditService.record("USER_STATUS_CHANGED", adminId, "users/" + targetId,
+                "{\"status\":\"" + status.name() + "\"}");
+        return AdminUserResponse.from(saved);
     }
 }

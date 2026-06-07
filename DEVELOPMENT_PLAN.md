@@ -58,7 +58,7 @@ Sistem prepoznaje tri uloge:
 **Baze i infrastruktura:**
 - PostgreSQL `16`
 - Redis `7`
-- Docker + Docker Compose
+- ~~Docker + Docker Compose~~ — **Docker se ne koristi** (permanentna odluka; servisi se pokreću lokalno)
 
 **Testiranje:**
 - Backend / Gateway: JUnit `5` + Spring Boot Test + MockMvc
@@ -319,7 +319,7 @@ create index idx_refresh_user on refresh_token(user_id);
 4. Backend: Spring Boot skeleton + `GET /health` kontroler (ili Actuator). Gateway: Spring Cloud Gateway + ruta ka backendu + sopstveni `/health`.
 5. Frontend: Vite + React skeleton koji gađa gateway `/health`.
 **Acceptance Criteria:**
-- `docker compose up` diže svih 5 servisa bez grešaka.
+- ~~`docker compose up` diže svih 5 servisa bez grešaka.~~ **PRESKOČENO** — Docker se ne koristi; servisi se pokreću lokalno (`mvn spring-boot:run`, `npm run dev`).
 - `curl http://localhost:8080/health` (gateway) vraća `200 {"status":"ok"}` i proxy-uje backend health.
 - Frontend u browseru prikazuje status "backend: ok".
 
@@ -433,7 +433,7 @@ create index idx_refresh_user on refresh_token(user_id);
 3. `IpGuardFilter` (`GlobalFilter` + Redis): brojač neuspešnih login-a / isteklih sesijskih tokena / dekripcionih grešaka **i detekcija sumnjivih sekvenci unosa** (SQLi/payload uzorci) po IP; prag → privremeni blok + `security_event("IP_BLOCKED")`.
 **Acceptance Criteria:**
 - N+1 uzastopnih neuspešnih login-a sa istog IP → `429` i red u `security_event`.
-- Direktan pristup backend portu spolja je nemoguć (connection refused / nije izložen).
+- ~~Direktan pristup backend portu spolja je nemoguć (connection refused / nije izložen).~~ **N/A** — Docker mrežna izolacija se ne koristi; backend je dostupan direktno na localhost u dev okruženju.
 - Legitiman saobraćaj nije pogođen ispod praga.
 
 ### Faza 10 — Honeypot i Honeytokens
@@ -460,16 +460,16 @@ create index idx_refresh_user on refresh_token(user_id);
 - Anchoring job kreira `audit_anchor` red i šalje `headHash` na konfigurisani kanal.
 - Brisanje/izmena se ne mogu izvesti kroz API (append-only; nema UPDATE/DELETE ruta).
 
-### Faza 12 — Integracija, Hardening i Dockerizacija
-**Cilj:** Sve povezano, kontejnerizovano, produkciono-spremno za odbranu.
+### Faza 12 — Integracija i Hardening
+**Cilj:** Sve povezano, produkciono-otkaljeno, spremno za odbranu. ~~Dockerizacija~~ **se preskače** — Docker se ne koristi.
 **Zadaci:**
 1. Spring Security sigurnosni headeri (`headers()`), CORS striktno na gateway origin.
-2. Finalni `docker-compose` (multi-stage Dockerfile-ovi, healthcheck-ovi, mreže), validacija env varijabli na startu.
-3. README sa uputstvom za pokretanje + demo skripta (registracija→share→honeypot→audit verify).
+2. ~~Finalni `docker-compose` (multi-stage Dockerfile-ovi, healthcheck-ovi, mreže)~~, validacija env varijabli na startu.
+3. README sa uputstvom za lokalno pokretanje + demo skripta (registracija→share→honeypot→audit verify).
 **Acceptance Criteria:**
-- `docker compose up --build` diže ceo sistem; demo skripta prolazi end-to-end.
+- ~~`docker compose up --build` diže ceo sistem; demo skripta prolazi end-to-end.~~ Demo skripta prolazi end-to-end sa lokalnim servisima.
 - Svi unit/integration testovi prolaze: `mvn test` (backend, gateway) i `npm test` (frontend).
-- Sigurnosni headeri prisutni; backend nedostupan spolja.
+- Sigurnosni headeri prisutni; backend nedostupan spolja (firewall / lokalna konfiguracija).
 
 ---
 
