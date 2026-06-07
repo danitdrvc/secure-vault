@@ -65,8 +65,16 @@ app:
     cookie-secure: ${APP_COOKIE_SECURE:false}
 
   # Faza 10 — Email adresa admina za alarm kada okine honeytoken. Ako je prazna, alarm se samo loguje.
+  # Faza 11 koristi istu adresu za slanje "headHash"-a pri sidrenju audit lanca.
   alert:
     admin-email: ${ADMIN_EMAIL:}
+
+  # Faza 11 — Periodično sidrenje (anchoring) vrha audit hash-lanca u nezavisni kanal (email/log).
+  # Podrazumevani interval i početno kašnjenje su veliki (1h) da posao ne okine tokom kratkih test
+  # JVM-ova; admin može sidriti i ručno preko POST /admin/audit/anchor.
+  audit:
+    anchor-interval-ms: ${AUDIT_ANCHOR_INTERVAL_MS:3600000}
+    anchor-initial-delay-ms: ${AUDIT_ANCHOR_INITIAL_DELAY_MS:3600000}
 
   # Faza 9 — Interni (server-to-server) pozivi sa gateway-a (npr. prijava IP_BLOCKED događaja).
   # Deljeni token koji backend zahteva u X-Internal-Token zaglavlju na /internal/** rutama.

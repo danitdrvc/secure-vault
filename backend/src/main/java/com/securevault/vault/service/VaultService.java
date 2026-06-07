@@ -86,7 +86,7 @@ public class VaultService {
         access.setGrantedById(ownerId);
         secretAccessRepository.save(access);
 
-        auditService.record("SECRET_CREATED", ownerId, "secrets/" + saved.getId(), "{}");
+        auditService.append("SECRET_CREATED", ownerId, "secrets/" + saved.getId(), "{}");
         return SecretSummaryResponse.from(saved);
     }
 
@@ -123,7 +123,7 @@ public class VaultService {
         secret.setEncryptedBlob(Base64.getDecoder().decode(request.encryptedBlob()));
         Secret saved = secretRepository.save(secret);
 
-        auditService.record("SECRET_UPDATED", userId, "secrets/" + secretId, "{}");
+        auditService.append("SECRET_UPDATED", userId, "secrets/" + secretId, "{}");
         return SecretSummaryResponse.from(saved);
     }
 
@@ -181,7 +181,7 @@ public class VaultService {
         secret.setRotatedAt(OffsetDateTime.now());
         Secret saved = secretRepository.save(secret);
 
-        auditService.record("SECRET_ROTATED", userId, "secrets/" + secretId, "{}");
+        auditService.append("SECRET_ROTATED", userId, "secrets/" + secretId, "{}");
         return SecretSummaryResponse.from(saved);
     }
 
@@ -194,7 +194,7 @@ public class VaultService {
         secretAccessRepository.deleteBySecretId(secretId);
         secretRepository.delete(secret);
 
-        auditService.record("SECRET_DELETED", userId, "secrets/" + secretId, "{}");
+        auditService.append("SECRET_DELETED", userId, "secrets/" + secretId, "{}");
     }
 
     /**
@@ -230,7 +230,7 @@ public class VaultService {
         access.setGrantedById(sharerId);
         SecretAccess saved = secretAccessRepository.save(access);
 
-        auditService.record("SECRET_SHARED", sharerId, "secrets/" + secretId,
+        auditService.append("SECRET_SHARED", sharerId, "secrets/" + secretId,
                 "{\"recipientId\":\"" + recipientId + "\"}");
         return ShareResponse.from(saved);
     }

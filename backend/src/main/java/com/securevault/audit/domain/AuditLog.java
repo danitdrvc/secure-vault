@@ -6,7 +6,6 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
-import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -15,8 +14,14 @@ import java.util.UUID;
 
 /**
  * Append-only zapis revizije. Mapira se na {@code audit_log}.
- * {@code hash} = SHA-256(canonical(payload) || prevHash) gradi hash-lanac
- * (puni se u Fazi 11). Nikad se ne UPDATE-uje ni DELETE-uje.
+ * {@code hash} = SHA-256(canonical(payload) || prevHash) gradi linearni hash-lanac
+ * (Faza 11). Nikad se ne UPDATE-uje ni DELETE-uje.
+ *
+ * <p>{@code createdAt} se postavlja EKSPLICITNO u {@code AuditService.append} (a ne preko
+ * {@code @CreationTimestamp}) jer je deo heširanog sadržaja: vrednost mora biti poznata PRE
+ * računanja heša i mora se identično reprodukovati pri {@code verifyChain()}. Postavlja se na
+ * UTC skraćeno na mikrosekunde (preciznost {@code timestamptz}-a) da round-trip kroz bazu bude
+ * bit-identičan.
  */
 @Entity
 @Table(name = "audit_log")
@@ -50,7 +55,6 @@ public class AuditLog {
     @Column(name = "hash", nullable = false, unique = true, length = 64)
     private String hash;
 
-    @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -116,5 +120,9 @@ public class AuditLog {
 
     public OffsetDateTime getCreatedAt() {
         return createdAt;
+    }
+
+    public void setCreatedAt(OffsetDateTime createdAt) {
+        this.createdAt = createdAt;
     }
 }

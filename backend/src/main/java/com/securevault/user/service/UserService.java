@@ -70,7 +70,7 @@ public class UserService {
 
         User saved = userRepository.save(user);
 
-        auditService.record("USER_REGISTERED", saved.getId(), "users/" + saved.getId(), "{}");
+        auditService.append("USER_REGISTERED", saved.getId(), "users/" + saved.getId(), "{}");
 
         return new RegisterResponse(
                 saved.getId(),
@@ -108,7 +108,7 @@ public class UserService {
         user.setStatus(status);
         User saved = userRepository.save(user);
 
-        auditService.record("USER_STATUS_CHANGED", adminId, "users/" + targetId,
+        auditService.append("USER_STATUS_CHANGED", adminId, "users/" + targetId,
                 "{\"status\":\"" + status.name() + "\"}");
         return AdminUserResponse.from(saved);
     }

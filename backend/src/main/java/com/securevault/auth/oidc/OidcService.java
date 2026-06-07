@@ -137,7 +137,7 @@ public class OidcService {
         }
 
         TokenService.IssuedTokens tokens = tokenService.issueForLogin(user);
-        auditService.record("OIDC_LOGIN_SUCCESS", user.getId(), "users/" + user.getId(), "{}");
+        auditService.append("OIDC_LOGIN_SUCCESS", user.getId(), "users/" + user.getId(), "{}");
         return new CallbackResult(tokens, properties.getPostLoginRedirectUri());
     }
 
