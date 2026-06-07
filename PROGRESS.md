@@ -8,7 +8,7 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 - [x] Faza 3  — Registracija i Skladištenje Ključeva
 - [x] Faza 4  — Autentikacija (lozinka + MFA + sesije)
 - [x] Faza 5  — OIDC Prijava
-- [ ] Faza 6  — Vault CRUD
+- [x] Faza 6  — Vault CRUD
 - [ ] Faza 7  — Sigurno Deljenje
 - [ ] Faza 8  — Admin i Sigurnosne Politike
 - [ ] Faza 9  — API Gateway i Rate Limiting
@@ -308,3 +308,67 @@ Status implementacije po fazama (vidi `DEVELOPMENT_PLAN.md`).
 > Napomena: `app.oidc.enabled=false` podrazumevano → `/auth/oidc/**` je `404` dok admin ne
 > konfiguriše provajdera (env `OIDC_*`). Povezivanje naloga sa `oidc_subject` je van OIDC toka
 > (OIDC ovde samo prijavljuje već povezane naloge).
+
+---
+
+## Faza 6 — Vault CRUD
+
+**Šta je urađeno:**
+- **Backend `vault` modul** (`web/` + `service/`, nad postojećim `domain/`+`repository/` iz Faze 1).
+  Prefiks `/vault/secrets`; sve rute zahtevaju važeću sesiju (`SecurityConfig` već ima
+  `anyRequest().authenticated()`), a identitet dolazi iz access tokena (`@AuthenticationPrincipal
+  AuthenticatedUser`), NIKAD iz tela. Server vidi/skladišti isključivo šifrat — enkripcija je
+  klijentska.
+  - `POST /vault/secrets` `{name, encryptedBlob, wrappedSecretKey}` → `201` + `SecretSummaryResponse`.
+    Upisuje `secrets` red (`is_honeytoken=false`) + vlasnikov `secret_access` red
+    (`wrapped_secret_key`, `granted_by_id=owner`).
+  - `GET /vault/secrets` → metapodaci svih PRISTUPAČNIH tajni bez honeytokena
+    (`SecretRepository.findAccessibleNonHoneytoken` — theta-join `Secret`×`SecretAccess` po
+    `user_id`; pokriva vlasnika danas i primaoce od Faze 7). Vraća samo `id/name/created/updated`,
+    NE blob.
+  - `GET /vault/secrets/{id}` → `SecretDetailResponse` (blob + MOJ `wrappedSecretKey` iz mog
+    `secret_access` reda). Bez pristupnog reda → `403 FORBIDDEN`; honeytoken/nepostojeće → `404`.
+  - `PUT /vault/secrets/{id}` `{name, encryptedBlob}` → samo vlasnik; `secretKey` se NE menja
+    (klijent re-šifruje istim ključem) pa `wrapped_secret_key` ostaje važeći.
+  - `DELETE /vault/secrets/{id}` → `204`; samo vlasnik; briše i sve `secret_access` redove.
+- **Validacija (`@Base64Bytes`)** — `encryptedBlob` 28 B–64 KiB (AES-GCM: nonce(12)+ct+tag(16));
+  `wrappedSecretKey` tačno 256 B (RSA-OAEP-2048). `name` `@NotBlank @Size(max=255)`.
+- **Honeytokeni nevidljivi** — lista ih izostavlja; direktan `GET /{id}` honeytokena vraća `404`
+  (kao da ne postoji), čak i uz postojeći pristupni red. Pravi okidač (freeze + alarm) je Faza 10.
+- **Audit stub** — `SECRET_CREATED` / `SECRET_UPDATED` / `SECRET_DELETED` (pravi lanac = Faza 11).
+- **`GlobalExceptionHandler`** — dodat `MethodArgumentTypeMismatchException` → `400` (neispravan UUID
+  u putanji ne curi kao `500`).
+- **Frontend `features/vault`** — `vault-crypto.ts` (čiste fn, bez mreže): `encryptNewSecret`
+  (generiše slučajan `secretKey`, `AES-GCM(secretKey, plaintext)`, `wrapTo(mojPublicKey,
+  secretKey)`), `decryptSecret` (`unwrap(mojPrivateKey)` → `AES-GCM` dekripcija), `reencryptSecret`
+  (re-šifruj izmenu ISTIM ključem, wrap netaknut). `api.ts` (CRUD pozivi). `vault-page.tsx`
+  (ruta `/vault`): lista, kreiranje, „Prikaži" (dekripcija u memoriji), izmena, brisanje; bez
+  otključanog vault-a stranica traži prijavu.
+- **Sopstveni javni ključ u sesiji** — `crypto/vault.ts` novi tip `VaultKeys = UnlockedVault &
+  { publicKey }`; `unlockVault` (login.ts) sada uvozi SPKI iz vault materijala i puni `publicKey`,
+  pa `SessionContext` drži usk+privateKey+publicKey (sve samo u memoriji). Time klijent može da
+  uvije `secretKey` ka sebi bez dodatnog dohvata.
+
+**Acceptance Criteria:**
+- [x] Create→Read round-trip vraća identičan plaintext u browseru. *(`vault.test.ts`:
+  `encryptNewSecret`→`decryptSecret` = isti plaintext; backend `VaultCrudTest
+  .createReadRoundTripVracaNetaknutSifrat`: `encryptedBlob`/`wrappedSecretKey` se vraćaju
+  bajt-za-bajt; DB inspekcija: `encrypted_blob` == poslati bajtovi, neprozirno.)*
+- [x] DB inspekcija: `encrypted_blob` je nečitljiv; nijedan endpoint ne vraća plaintext.
+  *(`VaultCrudTest`: odgovor nema `plaintext` polje; `vault.test.ts`: `encryptedBlob` ne sadrži
+  plaintext, `wrappedSecretKey` = 256 B.)*
+- [x] `GET /vault/secrets` NIKAD ne vraća honeytoken redove. *(`listaNikadNeVracaHoneytokene`:
+  ubačen honeytoken sa pristupnim redom — lista ga ne sadrži, direktan `GET` → `404`.)*
+- [x] Korisnik bez pristupa dobija `403` na `GET /vault/secrets/:id`.
+  *(`korisnikBezPristupaDobija403`; dodatno `neVlasnikNeMozeDaMenjaNitiBrise` → `403` na PUT/DELETE;
+  `neautentikovanPristupVraca401` → `401` bez sesije.)*
+
+**Verifikacija (lokalno, hand-installed JDK 21 + Maven 3.9.9 — bez Dockera):**
+- `mvn -f backend/pom.xml test` → **BUILD SUCCESS, 30 testova, 0 grešaka** (7 novih u `VaultCrudTest`,
+  `@SpringBootTest` + MockMvc nad embedded PG16).
+- `npm test` (`frontend/`) → **10 test fajlova, 27 testova, 0 grešaka** (4 nova u `vault.test.ts`).
+- `npm run build` (`tsc && vite build`) → čist type-check + build.
+
+> Napomena: `encryptedBlob` gornja granica (64 KiB) pokriva i veće tajne (npr. sertifikate).
+> Rotacija samog `secretKey`-a (nov ključ + re-wrap ka svim primaocima) je tema Faze 8; ovde se
+> izmena radi istim ključem da deljenje iz Faze 7 ostane konzistentno.

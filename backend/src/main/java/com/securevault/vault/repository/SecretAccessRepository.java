@@ -16,4 +16,7 @@ public interface SecretAccessRepository extends JpaRepository<SecretAccess, UUID
     List<SecretAccess> findBySecretId(UUID secretId);
 
     Optional<SecretAccess> findBySecretIdAndUserId(UUID secretId, UUID userId);
+
+    /** Briše sve pristupne redove tajne (pri brisanju tajne — uklanja i vlasnika i sve primaoce). */
+    void deleteBySecretId(UUID secretId);
 }

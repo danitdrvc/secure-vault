@@ -1,0 +1,254 @@
+import { useCallback, useEffect, useState } from 'react'
+import type { FormEvent } from 'react'
+import axios from 'axios'
+import { useSession } from '../../context/session-context'
+import {
+  createSecret,
+  deleteSecret,
+  getSecret,
+  listSecrets,
+  updateSecret,
+} from './api'
+import type { SecretSummary } from './api'
+import { decryptSecret, encryptNewSecret, reencryptSecret } from './vault-crypto'
+
+type Status = 'idle' | 'busy' | 'error'
+
+/** Otključana tajna u memoriji (plaintext + njen wrappedSecretKey radi re-šifrovanja pri izmeni). */
+interface OpenSecret {
+  id: string
+  plaintext: string
+  wrappedSecretKey: string
+}
+
+/** Iz axios/greške izvlači poruku iz konzistentnog oblika { error: { message } }. */
+function extractError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const data = err.response?.data as { error?: { message?: string } } | undefined
+    if (data?.error?.message) {
+      return data.error.message
+    }
+  }
+  if (err instanceof Error) {
+    return err.message
+  }
+  return 'Operacija nije uspela.'
+}
+
+/**
+ * Vault stranica (Faza 6): kreiranje, listanje, čitanje (dekripcija), izmena i brisanje tajni.
+ * Sva kripto-obrada je na klijentu (`vault-crypto.ts`) ključevima iz memorijske sesije —
+ * server vidi samo šifrat. Bez otključanog vault-a (master lozinka) stranica ne radi.
+ */
+export default function VaultPage() {
+  const session = useSession()
+  const [secrets, setSecrets] = useState<SecretSummary[]>([])
+  const [status, setStatus] = useState<Status>('idle')
+  const [message, setMessage] = useState('')
+
+  const [newName, setNewName] = useState('')
+  const [newValue, setNewValue] = useState('')
+
+  const [open, setOpen] = useState<OpenSecret | null>(null)
+  const [editName, setEditName] = useState('')
+
+  const vault = session.vault
+
+  const refresh = useCallback(async () => {
+    setStatus('busy')
+    try {
+      setSecrets(await listSecrets())
+      setStatus('idle')
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }, [])
+
+  useEffect(() => {
+    if (vault) {
+      void refresh()
+    }
+  }, [vault, refresh])
+
+  if (!vault || !session.user) {
+    return (
+      <section style={{ maxWidth: 560 }}>
+        <h2>Vault</h2>
+        <p>
+          Vault je zaključan. <a href="/login">Prijavite se</a> i unesite master lozinku da
+          otključate ključeve (oni nikad ne napuštaju čitač).
+        </p>
+      </section>
+    )
+  }
+
+  async function onCreate(event: FormEvent) {
+    event.preventDefault()
+    setStatus('busy')
+    setMessage('')
+    try {
+      const { encryptedBlob, wrappedSecretKey } = await encryptNewSecret(newValue, vault!.publicKey)
+      await createSecret({ name: newName.trim(), encryptedBlob, wrappedSecretKey })
+      setNewName('')
+      setNewValue('')
+      setMessage('Tajna je sačuvana (šifrovana na klijentu).')
+      await refresh()
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }
+
+  async function onReveal(id: string) {
+    setStatus('busy')
+    setMessage('')
+    try {
+      const detail = await getSecret(id)
+      const plaintext = await decryptSecret(detail.encryptedBlob, detail.wrappedSecretKey, vault!.privateKey)
+      setOpen({ id, plaintext, wrappedSecretKey: detail.wrappedSecretKey })
+      setEditName(detail.name)
+      setStatus('idle')
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }
+
+  async function onSaveEdit(event: FormEvent) {
+    event.preventDefault()
+    if (!open) {
+      return
+    }
+    setStatus('busy')
+    setMessage('')
+    try {
+      // Re-šifruj istim secretKey-em (iz postojećeg wrappedSecretKey) → wrap ostaje važeći.
+      const encryptedBlob = await reencryptSecret(open.plaintext, open.wrappedSecretKey, vault!.privateKey)
+      await updateSecret(open.id, { name: editName.trim(), encryptedBlob })
+      setOpen(null)
+      setMessage('Izmene su sačuvane.')
+      await refresh()
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }
+
+  async function onDelete(id: string) {
+    setStatus('busy')
+    setMessage('')
+    try {
+      await deleteSecret(id)
+      if (open?.id === id) {
+        setOpen(null)
+      }
+      setMessage('Tajna je obrisana.')
+      await refresh()
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }
+
+  const busy = status === 'busy'
+
+  return (
+    <section style={{ maxWidth: 640 }}>
+      <h2>Vault</h2>
+      <p style={{ fontSize: 13, color: '#666' }}>
+        Prijavljeni: <strong>{session.user.username}</strong>. Tajne se šifruju i dešifruju
+        isključivo u čitaču — server čuva samo neprozirni šifrat.
+      </p>
+
+      <form onSubmit={onCreate} style={cardStyle}>
+        <h3 style={{ marginTop: 0 }}>Nova tajna</h3>
+        <label style={fieldStyle}>
+          Naziv
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} required />
+        </label>
+        <label style={fieldStyle}>
+          Sadržaj (tajna)
+          <textarea
+            value={newValue}
+            onChange={(e) => setNewValue(e.target.value)}
+            rows={3}
+            required
+          />
+        </label>
+        <button type="submit" disabled={busy}>
+          {busy ? 'Šifrovanje...' : 'Sačuvaj tajnu'}
+        </button>
+      </form>
+
+      <h3>Moje tajne</h3>
+      {secrets.length === 0 ? (
+        <p style={{ color: '#666' }}>Još nema tajni.</p>
+      ) : (
+        <ul style={{ listStyle: 'none', padding: 0 }}>
+          {secrets.map((secret) => (
+            <li key={secret.id} style={cardStyle}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <strong>{secret.name}</strong>
+                <span style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" onClick={() => onReveal(secret.id)} disabled={busy}>
+                    Prikaži
+                  </button>
+                  <button type="button" onClick={() => onDelete(secret.id)} disabled={busy}>
+                    Obriši
+                  </button>
+                </span>
+              </div>
+
+              {open?.id === secret.id && (
+                <form onSubmit={onSaveEdit} style={{ marginTop: 12 }}>
+                  <label style={fieldStyle}>
+                    Naziv
+                    <input value={editName} onChange={(e) => setEditName(e.target.value)} required />
+                  </label>
+                  <label style={fieldStyle}>
+                    Sadržaj (dešifrovan u memoriji)
+                    <textarea
+                      data-testid={`secret-plaintext-${secret.id}`}
+                      value={open.plaintext}
+                      onChange={(e) => setOpen({ ...open, plaintext: e.target.value })}
+                      rows={3}
+                    />
+                  </label>
+                  <span style={{ display: 'flex', gap: 8 }}>
+                    <button type="submit" disabled={busy}>
+                      Sačuvaj izmene
+                    </button>
+                    <button type="button" onClick={() => setOpen(null)} disabled={busy}>
+                      Zatvori
+                    </button>
+                  </span>
+                </form>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {message && (
+        <p data-testid="vault-message" style={{ color: status === 'error' ? '#b00020' : '#0a7' }}>
+          {message}
+        </p>
+      )}
+    </section>
+  )
+}
+
+const fieldStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  marginBottom: 12,
+}
+
+const cardStyle: React.CSSProperties = {
+  border: '1px solid #e2e2e2',
+  borderRadius: 8,
+  padding: 16,
+  marginBottom: 16,
+}
