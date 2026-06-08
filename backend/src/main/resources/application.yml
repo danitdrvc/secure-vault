@@ -60,9 +60,10 @@ app:
     server-kms-key: ${SERVER_KMS_KEY:dev-only-insecure-server-kms-key-change-me}
     # Trajanje privremenog MFA tiketa između login koraka (sekunde).
     mfa-ticket-ttl-sec: 300
-    # Secure flag na sesijskim kolačićima. Dev je http://localhost (false); u
-    # produkciji/dockeru se pali preko APP_COOKIE_SECURE=true.
-    cookie-secure: ${APP_COOKIE_SECURE:false}
+    # Secure flag na sesijskim kolačićima. Sada kada browser ↔ gateway ide preko HTTPS-a,
+    # kolačići se šalju samo preko TLS-a (default true). Iza eksternog ne-TLS terminatora
+    # ili za čist HTTP dev postavi APP_COOKIE_SECURE=false.
+    cookie-secure: ${APP_COOKIE_SECURE:true}
 
   # Faza 10 — Email adresa admina za alarm kada okine honeytoken. Ako je prazna, alarm se samo loguje.
   # Faza 11 koristi istu adresu za slanje "headHash"-a pri sidrenju audit lanca.
@@ -94,9 +95,9 @@ app:
     token-uri: ${OIDC_TOKEN_URI:}
     jwks-uri: ${OIDC_JWKS_URI:}
     # Provajder vraća browser ovde (kroz gateway). Mora biti registrovan kod provajdera.
-    redirect-uri: ${OIDC_REDIRECT_URI:http://localhost:8080/api/auth/oidc/callback}
+    redirect-uri: ${OIDC_REDIRECT_URI:https://localhost:8080/api/auth/oidc/callback}
     scopes: ${OIDC_SCOPES:openid email profile}
     # Frontend stranice na koje se browser vraća posle OIDC toka.
-    post-login-redirect-uri: ${OIDC_POST_LOGIN_REDIRECT_URI:http://localhost:5173/login?oidc=success}
-    post-login-error-uri: ${OIDC_POST_LOGIN_ERROR_URI:http://localhost:5173/login?oidc=error}
+    post-login-redirect-uri: ${OIDC_POST_LOGIN_REDIRECT_URI:https://localhost:5173/login?oidc=success}
+    post-login-error-uri: ${OIDC_POST_LOGIN_ERROR_URI:https://localhost:5173/login?oidc=error}
     state-ttl-sec: ${OIDC_STATE_TTL_SEC:300}

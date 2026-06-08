@@ -126,6 +126,12 @@ public class AuditService {
         return verify().valid();
     }
 
+    /** Poslednjih 100 zapisa (najnoviji prvi) — za admin pregled u UI-ju. */
+    @Transactional(readOnly = true)
+    public List<AuditLog> recent() {
+        return auditLogRepository.findTop100ByOrderBySeqDesc();
+    }
+
     /**
      * {@code SHA-256(canonicalJSON(payload) || prevHash)}. Payload su sadržajna polja zapisa
      * (bez {@code seq}); {@code prevHash} se nadovezuje na kraj, po formuli iz plana.

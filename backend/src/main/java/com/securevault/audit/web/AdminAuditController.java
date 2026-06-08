@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * Admin uvid u imutabilni audit lanac (Faza 11). Saobraćaj stiže kroz gateway
  * ({@code /api/admin/audit/**} → {@code /admin/audit/**}). Sve rute zahtevaju ulogu {@code ADMIN}.
@@ -32,10 +34,26 @@ public class AdminAuditController {
         this.auditAnchorService = auditAnchorService;
     }
 
+    /** Poslednjih 100 zapisa lanca (najnoviji prvi) — za admin pregled u UI-ju. */
+    @GetMapping
+    public List<AuditEntryResponse> list() {
+        return auditService.recent().stream()
+                .map(AuditEntryResponse::from)
+                .toList();
+    }
+
     /** Proverava integritet celog hash-lanca (povezanost + preračunati heševi). */
     @GetMapping("/verify")
     public AuditVerificationResponse verify() {
         return AuditVerificationResponse.from(auditService.verify());
+    }
+
+    /** Poslednjih 20 upisanih sidara (najnovije prvo) — za admin pregled u UI-ju. */
+    @GetMapping("/anchors")
+    public List<AuditAnchorResponse> anchors() {
+        return auditAnchorService.recentAnchors().stream()
+                .map(AuditAnchorResponse::from)
+                .toList();
     }
 
     /**

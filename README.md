@@ -107,14 +107,15 @@ npm install      # samo prvi put
 npm run dev
 ```
 
-Otvori **http://localhost:5173** — početna prikazuje „backend: ok" ako je lanac
-frontend → gateway → backend ispravan.
+Otvori **https://localhost:5173** — početna prikazuje „backend: ok" ako je lanac
+frontend → gateway → backend ispravan. Prvi put browser traži da prihvatiš self-signed
+sertifikat i za frontend (`:5173`) i za gateway (`:8080`) — vidi „HTTPS / TLS" niže.
 
-Brza provera lanca iz konzole:
+Brza provera lanca iz konzole (`-k` preskače self-signed proveru u dev-u):
 
 ```powershell
-curl http://localhost:8080/health        # gateway:  {"status":"ok"}
-curl http://localhost:8080/api/health    # proxy → backend: {"status":"ok"}
+curl.exe -k https://localhost:8080/health        # gateway:  {"status":"ok"}
+curl.exe -k https://localhost:8080/api/health    # proxy → backend: {"status":"ok"}
 ```
 
 ---
@@ -166,6 +167,37 @@ endpointa i rate-limiting.
 | Honeypot / honeytokens | backend `honeypot` | pristup honeytokenu → nalog `FROZEN` + `HONEYPOT_HIT` + admin alarm |
 | Imutabilni audit | backend `audit` | SHA-256 hash-lanac + `verifyChain()` + periodični anchoring (append-only) |
 | **Validacija konfiguracije** | backend/gateway `StartupConfigValidator` | fail-fast na startu; nesigurne dev tajne su greška u `prod` profilu |
+
+---
+
+## HTTPS / TLS
+
+Sva komunikacija browser ↔ gateway ide preko HTTPS-a. Gateway je jedina ulazna tačka i
+**terminira TLS** (`:8080`); Vite dev server (`:5173`) je takođe na HTTPS-u. Backend (`:8081`)
+ostaje HTTP interno — nije izložen spolja (vidi produkcioni checklist).
+
+| Komponenta | Sertifikat | Konfiguracija |
+|---|---|---|
+| Gateway `:8080` | self-signed PKCS12 (`gateway/src/main/resources/keystore.p12`, CN=localhost, validnost 10 god) | `server.ssl.*` u `gateway/application.yml` (env: `SERVER_SSL_*`) |
+| Frontend `:5173` | self-signed (auto, `@vitejs/plugin-basic-ssl`) | `server.https: true` u `vite.config.ts` |
+
+Pošto su sertifikati self-signed, browser prvi put prikazuje upozorenje — prihvati ga za
+oba origina (`https://localhost:5173` i `https://localhost:8080`). Sa HTTPS-om su sesijski
+kolačići sada `Secure` (`APP_COOKIE_SECURE=true` je novi default).
+
+**Regeneracija dev keystore-a** (npr. po isteku ili na drugoj mašini):
+
+```powershell
+keytool -genkeypair -alias secure-vault-gateway -keyalg RSA -keysize 2048 `
+  -validity 3650 -storetype PKCS12 -keystore gateway/src/main/resources/keystore.p12 `
+  -storepass changeit -dname "CN=localhost, O=SecureVault, C=RS" `
+  -ext "SAN=dns:localhost,ip:127.0.0.1"
+```
+
+**Produkcija:** zameni `keystore.p12` stvarnim sertifikatom (npr. od CA / Let's Encrypt) i
+postavi `SERVER_SSL_KEYSTORE`, `SERVER_SSL_KEYSTORE_PASSWORD`, `SERVER_SSL_KEY_ALIAS` preko
+env-a. Iza eksternog TLS terminatora (reverse proxy) isključi gateway TLS sa
+`SERVER_SSL_ENABLED=false`.
 
 ---
 

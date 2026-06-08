@@ -8,7 +8,7 @@ import type { VaultMaterial } from './api'
 
 describe('OIDC prijava (Faza 5)', () => {
   it('oidcStartUrl gađa gateway /api/auth/oidc/start (full-page redirect, ne XHR)', () => {
-    expect(oidcStartUrl()).toBe('http://localhost:8080/api/auth/oidc/start')
+    expect(oidcStartUrl()).toBe('https://localhost:8080/api/auth/oidc/start')
   })
 
   it('posle OIDC-a vault je zaključan dok master lozinka ne otključa šifrovani materijal', async () => {

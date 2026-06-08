@@ -16,6 +16,9 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
     /** Vrh hash-lanca (poslednji upisani zapis) — koristi se za prevHash narednog. */
     Optional<AuditLog> findTopByOrderBySeqDesc();
 
+    /** Poslednjih 100 zapisa (najnoviji prvi) — za admin pregled u UI-ju. */
+    List<AuditLog> findTop100ByOrderBySeqDesc();
+
     List<AuditLog> findByActorIdOrderBySeqAsc(UUID actorId);
 
     /** Ceo lanac u redosledu nastanka — za {@code verifyChain()}. */

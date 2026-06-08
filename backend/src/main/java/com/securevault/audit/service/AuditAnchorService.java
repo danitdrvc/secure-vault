@@ -13,6 +13,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -101,6 +102,12 @@ public class AuditAnchorService {
         anchor.setChannel(channel);
         anchor.setExternalRef(externalRef);
         return Optional.of(auditAnchorRepository.save(anchor));
+    }
+
+    /** Poslednjih 20 sidara (najnovije prvo) — za admin pregled u UI-ju. */
+    @Transactional(readOnly = true)
+    public List<AuditAnchor> recentAnchors() {
+        return auditAnchorRepository.findTop20ByOrderByToSeqDesc();
     }
 
     /**

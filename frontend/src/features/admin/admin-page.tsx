@@ -3,12 +3,24 @@ import type { FormEvent } from 'react'
 import axios from 'axios'
 import { useSession } from '../../context/session-context'
 import {
+  anchorAudit,
   fetchAdminPolicy,
+  fetchAuditAnchors,
+  fetchAuditEntries,
   listUsers,
   updatePolicy,
   updateUserStatus,
+  verifyAudit,
 } from './api'
-import type { AdminPolicy, AdminUser, AdminUserStatus, UpdatePolicyRequest } from './api'
+import type {
+  AdminPolicy,
+  AdminUser,
+  AdminUserStatus,
+  AuditAnchor,
+  AuditEntry,
+  AuditVerification,
+  UpdatePolicyRequest,
+} from './api'
 
 type Status = 'idle' | 'busy' | 'error'
 
@@ -44,6 +56,10 @@ export default function AdminPage() {
   const [policy, setPolicy] = useState<AdminPolicy | null>(null)
   const [form, setForm] = useState<UpdatePolicyRequest>({})
 
+  const [audit, setAudit] = useState<AuditEntry[]>([])
+  const [verification, setVerification] = useState<AuditVerification | null>(null)
+  const [anchors, setAnchors] = useState<AuditAnchor[]>([])
+
   const loadPolicy = useCallback(async () => {
     setStatus('busy')
     try {
@@ -73,12 +89,29 @@ export default function AdminPage() {
     }
   }, [])
 
+  const loadAudit = useCallback(async () => {
+    try {
+      const [entries, check, anchorList] = await Promise.all([
+        fetchAuditEntries(),
+        verifyAudit(),
+        fetchAuditAnchors(),
+      ])
+      setAudit(entries)
+      setVerification(check)
+      setAnchors(anchorList)
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }, [])
+
   useEffect(() => {
     if (isAdmin) {
       void loadPolicy()
       void loadUsers()
+      void loadAudit()
     }
-  }, [isAdmin, loadPolicy, loadUsers])
+  }, [isAdmin, loadPolicy, loadUsers, loadAudit])
 
   if (!session.user || !isAdmin) {
     return (
@@ -97,6 +130,20 @@ export default function AdminPage() {
       setMessage(`Nalog "${updated.username}" je sada ${updated.status}.`)
       setStatus('idle')
       await loadUsers()
+    } catch (err) {
+      setStatus('error')
+      setMessage(extractError(err))
+    }
+  }
+
+  async function onAnchor() {
+    setStatus('busy')
+    setMessage('')
+    try {
+      const anchor = await anchorAudit()
+      setMessage(`Lanac je sidren: seq ${anchor.fromSeq}..${anchor.toSeq} (kanal: ${anchor.channel}).`)
+      setStatus('idle')
+      await loadAudit()
     } catch (err) {
       setStatus('error')
       setMessage(extractError(err))
@@ -138,7 +185,7 @@ export default function AdminPage() {
   }
 
   return (
-    <section style={{ maxWidth: 640 }}>
+    <section style={{ maxWidth: 820 }}>
       <h2>Admin</h2>
       <p style={{ fontSize: 13, color: '#666' }}>
         Admin upravlja samo statusom naloga i sigurnosnom politikom — nikad tajnama.
@@ -205,6 +252,110 @@ export default function AdminPage() {
         )}
       </form>
 
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <h3 style={{ margin: 0 }}>Audit log (imutabilni hash-lanac)</h3>
+          <span style={{ display: 'flex', gap: 8 }}>
+            <button type="button" onClick={onAnchor} disabled={busy}>
+              Sidri lanac
+            </button>
+            <button type="button" onClick={() => void loadAudit()} disabled={busy}>
+              Osveži
+            </button>
+          </span>
+        </div>
+
+        {verification && (
+          <p
+            data-testid="audit-verify"
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color: verification.valid ? '#0a7' : '#b00020',
+            }}
+          >
+            {verification.valid
+              ? `✓ Lanac je netaknut — provereno ${verification.verifiedCount} zapisa.`
+              : `✗ Lanac je narušen na seq ${verification.brokenAtSeq} (provereno ${verification.verifiedCount}).`}
+          </p>
+        )}
+
+        {audit.length === 0 ? (
+          <p style={{ color: '#666' }}>Još nema audit zapisa.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>seq</th>
+                  <th style={thStyle}>Vreme (UTC)</th>
+                  <th style={thStyle}>Akcija</th>
+                  <th style={thStyle}>Resurs</th>
+                  <th style={thStyle}>Actor</th>
+                  <th style={thStyle}>Hash</th>
+                </tr>
+              </thead>
+              <tbody>
+                {audit.map((e) => (
+                  <tr key={e.seq}>
+                    <td style={tdStyle}>{e.seq}</td>
+                    <td style={tdStyle}>{new Date(e.createdAt).toLocaleString()}</td>
+                    <td style={tdStyle}>{e.action}</td>
+                    <td style={tdStyle}>{e.resource ?? '—'}</td>
+                    <td style={tdStyle} title={e.actorId ?? ''}>
+                      {e.actorId ? e.actorId.slice(0, 8) : '—'}
+                    </td>
+                    <td style={{ ...tdStyle, fontFamily: 'monospace' }} title={e.hash}>
+                      {e.hash.slice(0, 12)}…
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
+          Prikazano poslednjih {audit.length} zapisa (najnoviji prvi). Zapisi su append-only — ne
+          mogu se izmeniti ni obrisati; svaka tiha izmena prekida hash-lanac i obara proveru.
+        </p>
+
+        <h4 style={{ marginBottom: 4 }}>Sidra lanca (anchoring)</h4>
+        <p style={{ fontSize: 12, color: '#666', marginTop: 0 }}>
+          „Sidri lanac" šalje vrh lanca (head hash) na nezavisan kanal (email/log) i upisuje trag
+          ovde. Sačuvani head hash van baze otkriva i potpuno prepisivanje loga — ne samo tihu izmenu.
+        </p>
+        {anchors.length === 0 ? (
+          <p style={{ color: '#666', fontSize: 13 }}>Lanac još nije sidren.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12 }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Vreme</th>
+                  <th style={thStyle}>Opseg (seq)</th>
+                  <th style={thStyle}>Kanal</th>
+                  <th style={thStyle}>Head hash</th>
+                </tr>
+              </thead>
+              <tbody>
+                {anchors.map((a) => (
+                  <tr key={a.id}>
+                    <td style={tdStyle}>{new Date(a.createdAt).toLocaleString()}</td>
+                    <td style={tdStyle}>
+                      {a.fromSeq}..{a.toSeq}
+                    </td>
+                    <td style={tdStyle}>{a.channel}</td>
+                    <td style={{ ...tdStyle, fontFamily: 'monospace' }} title={a.headHash}>
+                      {a.headHash.slice(0, 12)}…
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {message && (
         <p data-testid="admin-message" style={{ color: status === 'error' ? '#b00020' : '#0a7' }}>
           {message}
@@ -212,6 +363,19 @@ export default function AdminPage() {
       )}
     </section>
   )
+}
+
+const thStyle: React.CSSProperties = {
+  textAlign: 'left',
+  borderBottom: '2px solid #ddd',
+  padding: '6px 8px',
+  whiteSpace: 'nowrap',
+}
+
+const tdStyle: React.CSSProperties = {
+  borderBottom: '1px solid #eee',
+  padding: '6px 8px',
+  whiteSpace: 'nowrap',
 }
 
 const fieldStyle: React.CSSProperties = {

@@ -16,15 +16,18 @@
 
 .EXAMPLE
   ./demo.ps1
-  ./demo.ps1 -Gateway http://localhost:8080 -FrontendOrigin http://localhost:5173
+  ./demo.ps1 -Gateway https://localhost:8080 -FrontendOrigin https://localhost:5173
 #>
 [CmdletBinding()]
 param(
-    [string]$Gateway = "http://localhost:8080",
-    [string]$FrontendOrigin = "http://localhost:5173"
+    [string]$Gateway = "https://localhost:8080",
+    [string]$FrontendOrigin = "https://localhost:5173"
 )
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# Dev gateway koristi self-signed sertifikat — PS 5.1 nema -SkipCertificateCheck, pa
+# privremeno prihvatamo sve sertifikate (SAMO za lokalni demo, ne za produkciju).
+[Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 
 $script:Pass = 0
 $script:Fail = 0

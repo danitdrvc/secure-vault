@@ -1,5 +1,16 @@
 server:
   port: 8080
+  # HTTPS / TLS — gateway je jedina ulazna tačka, pa ovde terminiramo TLS (browser ↔ gateway).
+  # Dev: self-signed PKCS12 keystore (gateway/src/main/resources/keystore.p12, validnost 10 god,
+  # CN=localhost, SAN dns:localhost+127.0.0.1) — generisan keytool-om; browser traži da se prihvati.
+  # Produkcija: zameni keystore stvarnim sertifikatom i postavi lozinku/alias preko env-a.
+  # Isključi (npr. iza eksternog TLS terminatora) sa SERVER_SSL_ENABLED=false.
+  ssl:
+    enabled: ${SERVER_SSL_ENABLED:true}
+    key-store: ${SERVER_SSL_KEYSTORE:classpath:keystore.p12}
+    key-store-type: PKCS12
+    key-store-password: ${SERVER_SSL_KEYSTORE_PASSWORD:changeit}
+    key-alias: ${SERVER_SSL_KEY_ALIAS:secure-vault-gateway}
 
 spring:
   application:
@@ -47,7 +58,7 @@ spring:
       globalcors:
         cors-configurations:
           '[/**]':
-            allowedOrigins: ${FRONTEND_ORIGIN:http://localhost:5173}
+            allowedOrigins: ${FRONTEND_ORIGIN:https://localhost:5173}
             allowedMethods:
               - GET
               - POST
